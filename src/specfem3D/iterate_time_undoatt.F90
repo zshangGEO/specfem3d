@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -33,16 +33,24 @@
   use specfem_par_elastic
   use specfem_par_poroelastic
   use specfem_par_movie
+
   use gravity_perturbation, only: gravity_timeseries, GRAVITY_SIMULATION
+
+  ! hdf5 i/o server
+  use io_server_hdf5, only: do_io_start_idle,pass_info_to_io
 
   implicit none
 
   ! local parameters
   real(kind=CUSTOM_REAL), dimension(:,:), allocatable :: b_potential_acoustic_buffer,b_potential_dot_dot_acoustic_buffer
   real(kind=CUSTOM_REAL), dimension(:,:,:), allocatable :: b_displ_elastic_buffer,b_veloc_elastic_buffer,b_accel_elastic_buffer
+
+  ! note: at the moment, we still use file i/o to read back noise_surface_movie array - consider buffering in future...
   !real(kind=CUSTOM_REAL), dimension(:,:,:,:,:), allocatable :: b_noise_surface_movie_buffer
 
   double precision :: sizeval
+  integer :: NGLOB_wmax,NSPEC_ATTENUATION_wmax
+
   integer :: it_temp,seismo_current_temp,ier
 
   ! timing
@@ -61,6 +69,26 @@
     call exit_MPI(myrank,'for undo_attenuation, POROELASTIC kernel simulation is not supported yet') ! not working yet...
   if (SIMULATION_TYPE == 3 .and. NOISE_TOMOGRAPHY /= 0) &
     call exit_MPI(myrank,'for undo_attenuation, noise kernel simulation is not supported yet') ! not working yet...
+  if (LTS_MODE) &
+    call exit_MPI(myrank,'LTS mode for undo_attenuation is not supported yet')
+
+  ! hdf5 i/o server
+  if (HDF5_IO_NODES > 0) then
+    ! start io server
+    if (IO_storage_task) then
+      call do_io_start_idle()
+    else
+      ! compute node passes necessary info to io node
+      call pass_info_to_io()
+    endif
+    ! checks if anything to do
+    if (.not. IO_compute_task) then
+      ! i/o server synchronization
+      call synchronize_inter()
+      ! all done
+      return
+    endif
+  endif
 
   ! note: NSTEP must not be a multiple of NT_DUMP_ATTENUATION, but should be equal or larger
   !
@@ -76,10 +104,50 @@
 
   ! user output
   if (SAVE_FORWARD .or. SIMULATION_TYPE == 3) then
+    ! estimates file diskspace requirement based on maximum array size of all partitions
+    call max_all_i(NGLOB_AB,NGLOB_wmax)
+    call max_all_i(NSPEC_ATTENUATION_AB,NSPEC_ATTENUATION_wmax)
+
+    ! user output
     if (myrank == 0) then
       write(IMAIN,*) 'undoing attenuation:'
       write(IMAIN,*) '  total number of time subsets                     = ',NSUBSET_ITERATIONS
       write(IMAIN,*) '  wavefield snapshots at every NT_DUMP_ATTENUATION = ',NT_DUMP_ATTENUATION
+      write(IMAIN,*)
+      call flush_IMAIN()
+
+      ! file size per snapshot for save/read routines
+      write(IMAIN,*) '  estimated snapshot file storage:'
+      ! see fields stored in save_forward_arrays_undoatt() routine in file save_forward_arrays.f90
+      sizeval = 0.d0
+      if (ACOUSTIC_SIMULATION) then
+        ! potential + potential_dot + potential_dot_dot
+        sizeval = sizeval + 3.d0 * dble(NGLOB_wmax) * dble(CUSTOM_REAL)
+      endif
+      if (ELASTIC_SIMULATION) then
+        ! displ + veloc + accel
+        sizeval = 3.d0 * dble(NDIM) * dble(NGLOB_wmax) * dble(CUSTOM_REAL)
+        if (ATTENUATION) then
+          ! R_xx + R_yy + R_xy + R_xz + R_yz + R_trace
+          sizeval = sizeval + 6.d0 * dble(NGLLX*NGLLY*NGLLZ*N_SLS) * dble(NSPEC_ATTENUATION_wmax) * dble(CUSTOM_REAL)
+        endif
+      endif
+      if (POROELASTIC_SIMULATION) then
+        ! displs + velocs + accels + displw + velocw + accelw
+        sizeval = 6.d0 * dble(NDIM) * dble(NGLOB_wmax) * dble(CUSTOM_REAL)
+      endif
+      ! in MB
+      sizeval = sizeval / 1024.d0 / 1024.d0
+      write(IMAIN,*) '  size of single time snapshot subset per slice         = ', sngl(sizeval),'MB'
+      ! for all processes (approximately, assumes all processes have same number of elements/points)
+      sizeval = sizeval * dble(NPROC)
+      write(IMAIN,*) '  size of single time snapshot subset for all processes = ', sngl(sizeval),'MB'
+      write(IMAIN,*) '                                                        = ', sngl(sizeval/1024.d0),'GB'
+      write(IMAIN,*)
+      ! for all processes and all subsets
+      sizeval = sizeval * dble(NSUBSET_ITERATIONS)
+      write(IMAIN,*) '  total size of all time snapshots subsets              = ', sngl(sizeval),'MB'
+      write(IMAIN,*) '                                                        = ', sngl(sizeval/1024.d0),'GB'
       write(IMAIN,*)
       call flush_IMAIN()
     endif
@@ -91,32 +159,41 @@
     if (myrank == 0) then
       if (ACOUSTIC_SIMULATION) then
         ! buffer(NGLOB_AB,NT_DUMP_ATTENUATION) in MB
-        sizeval = 2.0 * dble(NGLOB_AB) * dble(NT_DUMP_ATTENUATION) * dble(CUSTOM_REAL) / 1024.d0 / 1024.d0
+        sizeval = 2.d0 * dble(NGLOB_AB) * dble(NT_DUMP_ATTENUATION) * dble(CUSTOM_REAL) / 1024.d0 / 1024.d0
         write(IMAIN,*) '  size of acoustic wavefield buffer per slice      = ', sngl(sizeval),'MB'
       endif
       if (ELASTIC_SIMULATION) then
         ! buffer(3,NGLOB_AB,NT_DUMP_ATTENUATION) in MB
         sizeval = dble(NDIM) * dble(NGLOB_AB) * dble(NT_DUMP_ATTENUATION) * dble(CUSTOM_REAL) / 1024.d0 / 1024.d0
-        if (APPROXIMATE_HESS_KL) sizeval = 2 * sizeval
+        if (APPROXIMATE_HESS_KL) sizeval = 3.d0 * sizeval
         write(IMAIN,*) '  size of elastic wavefield buffer per slice       = ', sngl(sizeval),'MB'
       endif
+      write(IMAIN,*)
+      call flush_IMAIN()
     endif
-    ! buffer arrays
+
+    ! allocates buffer arrays
     if (ACOUSTIC_SIMULATION) then
       allocate(b_potential_acoustic_buffer(NGLOB_AB,NT_DUMP_ATTENUATION), &
                b_potential_dot_dot_acoustic_buffer(NGLOB_AB,NT_DUMP_ATTENUATION),stat=ier)
       if (ier /= 0 ) call exit_MPI(myrank,'error allocating b_potential_acoustic arrays')
+      b_potential_acoustic_buffer(:,:) = 0.0_CUSTOM_REAL
+      b_potential_dot_dot_acoustic_buffer(:,:) = 0.0_CUSTOM_REAL
     endif
     if (ELASTIC_SIMULATION) then
       allocate(b_displ_elastic_buffer(NDIM,NGLOB_AB,NT_DUMP_ATTENUATION),stat=ier)
       if (ier /= 0 ) call exit_MPI(myrank,'error allocating b_displ_elastic')
+      b_displ_elastic_buffer(:,:,:) = 0.0_CUSTOM_REAL
       if (APPROXIMATE_HESS_KL) then
         allocate(b_veloc_elastic_buffer(NDIM,NGLOB_AB,NT_DUMP_ATTENUATION), &
                  b_accel_elastic_buffer(NDIM,NGLOB_AB,NT_DUMP_ATTENUATION),stat=ier)
         if (ier /= 0 ) call exit_MPI(myrank,'error allocating b_accel_elastic arrays')
+        b_veloc_elastic_buffer(:,:,:) = 0.0_CUSTOM_REAL
+        b_accel_elastic_buffer(:,:,:) = 0.0_CUSTOM_REAL
       endif
       ! noise kernel for source strength (sigma_kernel) needs buffer for reconstructed noise_surface_movie array,
       ! otherwise we need file i/o which will considerably slow down performance
+      ! note: at the moment, we still use file i/o to read back noise_surface_movie array - consider buffering in future...
       !if (NOISE_TOMOGRAPHY == 3) then
       !  allocate(b_noise_surface_movie_buffer(NDIM,NGLLX,NGLLY,NSPEC_TOP,NT_DUMP_ATTENUATION),stat=ier)
       !  if (ier /= 0 ) call exit_MPI(myrank,'Error allocating b_noise_surface_movie_buffer')
@@ -181,23 +258,21 @@
 !   s t a r t   t i m e   i t e r a t i o n s
 !
 
+  ! user output
   if (myrank == 0) then
     write(IMAIN,*)
     write(IMAIN,*) 'Starting time iteration loop in undoing attenuation...'
     write(IMAIN,*)
     call flush_IMAIN()
   endif
+  call synchronize_all()
 
   ! create an empty file to monitor the start of the simulation
   if (myrank == 0) then
     open(unit=IOUT,file=trim(OUTPUT_FILES)//'/starttimeloop.txt',status='unknown',action='write')
-    write(IOUT,*) 'hello, starting time loop'
+    write(IOUT,*) 'hello, starting time loop in iterate_time_undoatt() routine'
     close(IOUT)
   endif
-
-  ! *********************************************************
-  ! ************* MAIN LOOP OVER THE TIME STEPS *************
-  ! *********************************************************
 
   ! time loop increments begin/end
   it_begin = 1
@@ -212,6 +287,10 @@
 
   ! get MPI starting
   time_start = wtime()
+
+  ! *********************************************************
+  ! ************* MAIN LOOP OVER THE TIME STEPS *************
+  ! *********************************************************
 
   ! loops over time subsets
   do iteration_on_subset = 1, NSUBSET_ITERATIONS
@@ -228,7 +307,7 @@
       ! note: after reading the restart files of displacement back from disk, recompute the strain from displacement;
       !       this is better than storing the strain to disk as well, which would drastically increase I/O volume
       ! computes strain based on current backward/reconstructed wavefield
-      !if (COMPUTE_AND_STORE_STRAIN) call compute_strain_att_backward()   ! for future use to reduce file sizes...
+      if (COMPUTE_AND_STORE_STRAIN) call compute_strain_att_backward()
     endif
 
     ! time loop within this iteration subset
@@ -397,6 +476,7 @@
         endif
 
         ! for noise kernel
+        ! note: at the moment, we still use file i/o to read back noise_surface_movie array - consider buffering in future...
         !if (NOISE_TOMOGRAPHY == 3) then
         !  b_noise_surface_movie_buffer(:,:,:,:,it_of_this_subset) = noise_surface_movie(:,:,:,:)
         !endif
@@ -407,13 +487,15 @@
       seismo_current = seismo_current_temp
 
       ! computes strain based on current adjoint wavefield
-      !if (COMPUTE_AND_STORE_STRAIN) call compute_strain_att()  ! for future use to reduce file sizes...
+      if (COMPUTE_AND_STORE_STRAIN) call compute_strain_att()
 
       ! adjoint wavefield simulation
       do it_of_this_subset = 1, it_subset_end
 
         ! reads backward/reconstructed wavefield from buffers
         ! note: uses wavefield at corresponding time (NSTEP - it + 1 ), i.e. we have now time-reversed wavefields
+
+        it = it + 1
 
         ! only the displacement needs to be stored in memory buffers in order to compute the sensitivity kernels,
         ! not the memory variables R_ij, because the sensitivity kernel calculations only involve the displacement
@@ -430,6 +512,7 @@
             b_accel(:,:) = b_accel_elastic_buffer(:,:,it_subset_end-it_of_this_subset+1)
           endif
           ! for noise kernel
+          ! note: at the moment, we still use file i/o to read back noise_surface_movie array - consider buffering in future...
           !if (NOISE_TOMOGRAPHY == 3) then
           !  noise_surface_movie(:,:,:,:) = b_noise_surface_movie_buffer(:,:,:,:,it_subset_end-it_of_this_subset+1)
           !endif
@@ -437,7 +520,7 @@
 
         ! transfers wavefields from CPU to GPU
         if (GPU_MODE) then
-          ! daniel debug: check if these transfers could be made async to overlap
+          !#TODO: check if these transfers could be made async to overlap
           if (ACOUSTIC_SIMULATION) then
             call transfer_b_potential_ac_to_device(NGLOB_AB,b_potential_acoustic,Mesh_pointer)
             call transfer_b_potential_dot_dot_ac_to_device(NGLOB_AB,b_potential_dot_dot_acoustic,Mesh_pointer)
@@ -450,8 +533,6 @@
             endif
           endif
         endif
-
-        it = it + 1
 
         ! simulation status output and stability check
         if (mod(it,NTSTEP_BETWEEN_OUTPUT_INFO) == 0 .or. it == it_begin + 4 .or. it == it_end) then
@@ -510,14 +591,8 @@
     endif
   endif
 
-  ! user output
-  call it_print_elapsed_time()
-
-  ! safety check of last time loop increment
-  if (it /= it_end) then
-    print *,'Error time increments: it_end = ',it_end,' and last it = ',it,' do not match!'
-    call exit_MPI(myrank,'Error invalid time increment ending')
-  endif
+  ! user output of runtime
+  call print_elapsed_time()
 
   !! CD CD added this
   if (RECIPROCITY_AND_KH_INTEGRAL) then
@@ -544,8 +619,14 @@
   endif
 #endif
 
-  ! cleanup GPU arrays
-  if (GPU_MODE) call it_cleanup_GPU()
+  ! safety check of last time loop increment
+  if (it /= it_end) then
+    print *,'Error time increments: it_end = ',it_end,' and last it = ',it,' do not match!'
+    call exit_MPI(myrank,'Error invalid time increment ending')
+  endif
+
+  ! hdf5 i/o server
+  ! i/o server synchronization
+  if (HDF5_IO_NODES > 0) call synchronize_inter()
 
   end subroutine iterate_time_undoatt
-

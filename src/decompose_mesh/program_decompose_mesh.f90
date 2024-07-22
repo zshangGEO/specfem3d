@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -31,20 +31,23 @@ program xdecompose_mesh
 
   use decompose_mesh_par, only: nparts,localpath_name,outputpath_name,ADIOS_FOR_DATABASES
 
+  ! HDF5 file I/O
+  use shared_parameters, only: HDF5_ENABLED
+
   implicit none
 
   integer :: i,myrank
   logical :: BROADCAST_AFTER_READ
   character(len=MAX_STRING_LEN) :: arg(3)
 
-! user output
+  ! user output
   print *
   print *,'**********************'
   print *,'Serial mesh decomposer'
   print *,'**********************'
   print *
 
-! check usage
+  ! check usage
   do i = 1,3
     call get_command_argument(i,arg(i))
     if (i <= 3 .and. trim(arg(i)) == '') then
@@ -63,34 +66,40 @@ program xdecompose_mesh
   localpath_name = arg(2)
   outputpath_name = arg(3)
 
- ! needs local_path for mesh files
+  ! needs local_path for mesh files
   myrank = 0
   BROADCAST_AFTER_READ = .false.
   call read_parameter_file(BROADCAST_AFTER_READ)
 
   ! checks adios parameters
   if (ADIOS_FOR_DATABASES) then
+    ! note: this decomposer runs as a single, serial process.
+    !       writing out ADIOS files would require a parallel section, for each process - not clear yet how to do that...
     print *, 'Error: ADIOS_FOR_DATABASES set to .true. in Par_file'
     print *, 'ADIOS format for databases stored by xdecompose_mesh not implemented yet, please check your Par_file settings...'
     stop 'Error ADIOS_FOR_DATABASES setting; Reenter command line'
   endif
 
-! reads in (CUBIT) mesh files: mesh_file,nodes_coord_file, ...
+  ! reads in (CUBIT) mesh files: mesh_file,nodes_coord_file, ...
   call read_mesh_files()
 
-! checks valence of nodes
+  ! checks valence of nodes
   call check_valence()
 
-! sets up elements for local time stepping
+  ! sets up elements for local time stepping
   call lts_setup_elements()
 
-! partitions mesh (using scotch, metis, or patoh partitioners via constants.h)
+  ! partitions mesh (using scotch, metis, or patoh partitioners via constants.h)
   call decompose_mesh()
 
-! writes out database files
-  call write_mesh_databases()
+  ! writes out database files
+  if (HDF5_ENABLED) then
+    call write_mesh_databases_hdf5()
+  else
+    call write_mesh_databases()
+  endif
 
-! user output
+  ! user output
   print *
   print *,'finished successfully'
   print *

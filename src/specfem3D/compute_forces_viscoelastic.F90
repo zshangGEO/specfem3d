@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -43,10 +43,14 @@
   use constants, only: CUSTOM_REAL,NGLLX,NGLLY,NGLLZ,NDIM,N_SLS,ONE_THIRD,FOUR_THIRDS, &
     m1,m2
 
+  use shared_parameters, only: SIMULATION_TYPE, &
+    USE_LDDRK,LTS_MODE,SAVE_MOHO_MESH, &
+    ATTENUATION,ANISOTROPY, &
+    MOVIE_VOLUME_STRESS
+
   use fault_solver_common, only: Kelvin_Voigt_eta,USE_KELVIN_VOIGT_DAMPING
 
-  use specfem_par, only: SAVE_MOHO_MESH,USE_LDDRK, &
-                         xixstore,xiystore,xizstore,etaxstore,etaystore,etazstore, &
+  use specfem_par, only: xixstore,xiystore,xizstore,etaxstore,etaystore,etazstore, &
                          gammaxstore,gammaystore,gammazstore,jacobianstore, &
                          NSPEC_AB,NGLOB_AB, &
                          hprime_xx,hprime_xxT, &
@@ -55,10 +59,9 @@
                          hprimewgll_xx,hprimewgll_xxT, &
                          hprimewgll_yy,hprimewgll_zz, &
                          kappastore,mustore,ibool, &
-                         ATTENUATION, &
                          NSPEC_ATTENUATION_AB,NSPEC_ATTENUATION_AB_LDDRK, &
-                         ANISOTROPY,SIMULATION_TYPE, &
-                         NSPEC_ADJOINT,is_moho_top,is_moho_bot, &
+                         NSPEC_ADJOINT, &
+                         is_moho_top,is_moho_bot, &
                          irregular_element_number,xix_regular,jacobian_regular
 
   use specfem_par, only: wgllwgll_xy_3D,wgllwgll_xz_3D,wgllwgll_yz_3D
@@ -73,7 +76,14 @@
                                  ispec2D_moho_top,ispec2D_moho_bot, &
                                  nspec_inner_elastic,nspec_outer_elastic,phase_ispec_inner_elastic
 
+  ! movie
+  use specfem_par_movie, only: stress_xx,stress_yy,stress_zz,stress_xy,stress_xz,stress_yz
+
+  ! PML
   use pml_par, only: is_CPML,NSPEC_CPML
+
+  ! LTS
+  use specfem_par_lts, only: lts_type_compute_pelem,current_lts_elem,current_lts_boundary_elem
 
 #ifdef FORCE_VECTORIZATION
   use constants, only: NGLLCUBE
@@ -195,11 +205,13 @@
 !$OMP c55store,c56store,c66store, &
 !$OMP factor_common,factor_common_kappa, &
 !$OMP COMPUTE_AND_STORE_STRAIN,ATTENUATION,ANISOTROPY,SIMULATION_TYPE, &
+!$OMP MOVIE_VOLUME_STRESS,stress_xx,stress_yy,stress_zz,stress_xy,stress_xz,stress_yz, &
 !$OMP R_xx,R_yy,R_xy,R_xz,R_yz,R_trace, &
 !$OMP epsilondev_xx,epsilondev_yy,epsilondev_xy,epsilondev_xz,epsilondev_yz,epsilondev_trace,epsilon_trace_over_3, &
 !$OMP USE_LDDRK,R_xx_lddrk,R_yy_lddrk,R_xy_lddrk,R_xz_lddrk,R_yz_lddrk,R_trace_lddrk, &
 !$OMP NSPEC_AB,NSPEC_ATTENUATION_AB,NSPEC_ATTENUATION_AB_LDDRK,NSPEC_STRAIN_ONLY, &
-!$OMP SAVE_MOHO_MESH,dsdx_top,dsdx_bot,ispec2D_moho_top,ispec2D_moho_bot,is_moho_top,is_moho_bot &
+!$OMP SAVE_MOHO_MESH,dsdx_top,dsdx_bot,ispec2D_moho_top,ispec2D_moho_bot,is_moho_top,is_moho_bot, &
+!$OMP LTS_MODE,lts_type_compute_pelem,current_lts_elem,current_lts_boundary_elem &
 !$OMP ) &
 !$OMP PRIVATE( &
 !$OMP ispec_p,ispec,ispec_irreg,i,j,k,l,iglob,ispec2D, &
@@ -241,16 +253,35 @@
     ispec = phase_ispec_inner_elastic(ispec_p,iphase)
 
     ! selects element contribution
+
+    ! LTS
+    if (LTS_MODE) then
+      if (lts_type_compute_pelem) then
+        ! p-element call
+        ! if not in this p-level, skip
+        if (.not. current_lts_elem(ispec)) cycle
+        ! only work on elements _strictly_ in this level (all 125 nodes in P)
+        if (current_lts_boundary_elem(ispec)) cycle
+      else
+        ! boundary-element call
+        ! only for boundary elements
+        if (.not. current_lts_boundary_elem(ispec)) cycle
+      endif
+    endif
+
     ! PML elements will be computed later
     if (is_CPML(ispec) .and. .not. backward_simulation) cycle
 
     ! no PML elements from here on
 
-    ! stores displacment values in local array
+    ! stores displacement values in local array
     if (USE_KELVIN_VOIGT_DAMPING) then
       ! Kelvin Voigt damping: artificial viscosity around dynamic faults
       eta = Kelvin_Voigt_eta(ispec)
-      if (is_CPML(ispec) .and. eta /= 0._CUSTOM_REAL) stop 'you cannot put a fault inside a PML layer'
+
+      ! checks w/ PML (done in prepare_timerun_pml())
+      !if (is_CPML(ispec) .and. eta /= 0._CUSTOM_REAL) stop 'you cannot put a fault inside a PML layer'
+
       ! note: this loop will not fully vectorize because it contains a dependency
       !       (through indirect addressing with array ibool())
       !       thus, instead of DO_LOOP_IJK we use do k=..;do j=..;do i=..,
@@ -510,9 +541,9 @@
             duzdyl_plus_duydzl_att = duzdyl_att + duydzl_att
 
             ! compute deviatoric strain
+            epsilondev_trace_loc(INDEX_IJK) = (duxdxl_att + duydyl_att + duzdzl_att)
             templ = ONE_THIRD * (duxdxl_att + duydyl_att + duzdzl_att)
             if (SIMULATION_TYPE == 3) epsilon_trace_over_3(INDEX_IJK,ispec) = templ
-            epsilondev_trace_loc(INDEX_IJK) = 3._CUSTOM_REAL * templ
             epsilondev_xx_loc(INDEX_IJK) = duxdxl_att - templ
             epsilondev_yy_loc(INDEX_IJK) = duydyl_att - templ
             epsilondev_xy_loc(INDEX_IJK) = 0.5_CUSTOM_REAL * duxdyl_plus_duydxl_att
@@ -524,9 +555,9 @@
         ! non-attenuation case
         DO_LOOP_IJK
           ! computes deviatoric strain attenuation and/or for kernel calculations
+          epsilondev_trace_loc(INDEX_IJK) = (duxdxl(INDEX_IJK) + duydyl(INDEX_IJK) + duzdzl(INDEX_IJK))
           templ = ONE_THIRD * (duxdxl(INDEX_IJK) + duydyl(INDEX_IJK) + duzdzl(INDEX_IJK))
           if (SIMULATION_TYPE == 3) epsilon_trace_over_3(INDEX_IJK,ispec) = templ
-          epsilondev_trace_loc(INDEX_IJK) = 3._CUSTOM_REAL * templ
           epsilondev_xx_loc(INDEX_IJK) = duxdxl(INDEX_IJK) - templ
           epsilondev_yy_loc(INDEX_IJK) = duydyl(INDEX_IJK) - templ
           epsilondev_xy_loc(INDEX_IJK) = 0.5_CUSTOM_REAL * (duxdyl(INDEX_IJK) + duydxl(INDEX_IJK))
@@ -598,6 +629,17 @@
         sigma_xz = mul * duzdxl_plus_duxdzl
         sigma_yz = mul * duzdyl_plus_duydzl
       endif ! ANISOTROPY
+
+      ! stores stress for movie output
+      if (MOVIE_VOLUME_STRESS) then
+        ! store stress tensor
+        stress_xx(INDEX_IJK,ispec) = sigma_xx
+        stress_yy(INDEX_IJK,ispec) = sigma_yy
+        stress_zz(INDEX_IJK,ispec) = sigma_zz
+        stress_xy(INDEX_IJK,ispec) = sigma_xy
+        stress_xz(INDEX_IJK,ispec) = sigma_xz
+        stress_yz(INDEX_IJK,ispec) = sigma_yz
+      endif
 
       ! subtract memory variables if attenuation
       if (ATTENUATION .and. .not. is_CPML(ispec)) then
@@ -788,12 +830,31 @@
 
     ! save deviatoric strain for Runge-Kutta scheme
     if (COMPUTE_AND_STORE_STRAIN) then
-      if (ATTENUATION .and. .not. is_CPML(ispec)) epsilondev_trace(:,:,:,ispec) = epsilondev_trace_loc(:,:,:)
-      epsilondev_xx(:,:,:,ispec) = epsilondev_xx_loc(:,:,:)
-      epsilondev_yy(:,:,:,ispec) = epsilondev_yy_loc(:,:,:)
-      epsilondev_xy(:,:,:,ispec) = epsilondev_xy_loc(:,:,:)
-      epsilondev_xz(:,:,:,ispec) = epsilondev_xz_loc(:,:,:)
-      epsilondev_yz(:,:,:,ispec) = epsilondev_yz_loc(:,:,:)
+      ! LTS
+      if (LTS_MODE .and. .not. lts_type_compute_pelem) then
+        ! note: we first call this compute_forces routine for p-elements only, then in a second call for boundary-elements.
+        !       to store strains, we will in the first call re-set the strain as by default, but in the second call
+        !       only add to the existing values.
+        ! boundary-element call
+        ! adds contributions
+        if (ATTENUATION .and. .not. is_CPML(ispec)) &
+          epsilondev_trace(:,:,:,ispec) = epsilondev_trace(:,:,:,ispec) + epsilondev_trace_loc(:,:,:)
+        ! already stored epsilon_trace_over_3(:,:,:,ispec) above for SIMULATION_TYPE == 3
+        epsilondev_xx(:,:,:,ispec) = epsilondev_xx(:,:,:,ispec) + epsilondev_xx_loc(:,:,:)
+        epsilondev_yy(:,:,:,ispec) = epsilondev_yy(:,:,:,ispec) + epsilondev_yy_loc(:,:,:)
+        epsilondev_xy(:,:,:,ispec) = epsilondev_xy(:,:,:,ispec) + epsilondev_xy_loc(:,:,:)
+        epsilondev_xz(:,:,:,ispec) = epsilondev_xz(:,:,:,ispec) + epsilondev_xz_loc(:,:,:)
+        epsilondev_yz(:,:,:,ispec) = epsilondev_yz(:,:,:,ispec) + epsilondev_yz_loc(:,:,:)
+      else
+        ! default
+        if (ATTENUATION .and. .not. is_CPML(ispec)) epsilondev_trace(:,:,:,ispec) = epsilondev_trace_loc(:,:,:)
+        ! already stored epsilon_trace_over_3(:,:,:,ispec) above for SIMULATION_TYPE == 3
+        epsilondev_xx(:,:,:,ispec) = epsilondev_xx_loc(:,:,:)
+        epsilondev_yy(:,:,:,ispec) = epsilondev_yy_loc(:,:,:)
+        epsilondev_xy(:,:,:,ispec) = epsilondev_xy_loc(:,:,:)
+        epsilondev_xz(:,:,:,ispec) = epsilondev_xz_loc(:,:,:)
+        epsilondev_yz(:,:,:,ispec) = epsilondev_yz_loc(:,:,:)
+      endif
     endif
 
   enddo  ! spectral element loop
@@ -913,8 +974,6 @@
 
   use constants, only: CUSTOM_REAL,NGLLX,NGLLY,NGLLZ,NDIM,ONE_THIRD,m1,m2
 
-  use fault_solver_common, only: Kelvin_Voigt_eta,USE_KELVIN_VOIGT_DAMPING
-
   use specfem_par, only: xixstore,xiystore,xizstore,etaxstore,etaystore,etazstore,gammaxstore,gammaystore,gammazstore, &
                          NGLOB_AB, &
                          hprime_xx,hprime_xxT, &
@@ -938,7 +997,8 @@
                      rmemory_duy_dxl_y,rmemory_duy_dzl_y,rmemory_duz_dyl_y,rmemory_dux_dyl_y, &
                      rmemory_dux_dxl_z,rmemory_duy_dyl_z,rmemory_duz_dzl_z, &
                      rmemory_duz_dxl_z,rmemory_duz_dyl_z,rmemory_duy_dzl_z,rmemory_dux_dzl_z, &
-                     rmemory_displ_elastic,PML_displ_old,PML_displ_new
+                     rmemory_displ_elastic, &
+                     PML_displ_old,PML_displ_new
 
 #ifdef FORCE_VECTORIZATION
   use constants, only: NGLLCUBE
@@ -954,7 +1014,7 @@
   real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLY,NGLLZ,NSPEC_STRAIN_ONLY),intent(inout) :: &
     epsilondev_xx,epsilondev_yy,epsilondev_xy,epsilondev_xz,epsilondev_yz
 
-  real(kind=CUSTOM_REAL),dimension(NGLLX,NGLLY,NGLLZ,NSPEC_ADJOINT),intent(out) :: epsilon_trace_over_3
+  real(kind=CUSTOM_REAL),dimension(NGLLX,NGLLY,NGLLZ,NSPEC_ADJOINT),intent(inout) :: epsilon_trace_over_3
 
   integer,intent(in) :: iphase
 
@@ -975,9 +1035,6 @@
   real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLY,NGLLZ) :: newtempx1,newtempx2,newtempx3
   real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLY,NGLLZ) :: newtempy1,newtempy2,newtempy3
   real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLY,NGLLZ) :: newtempz1,newtempz2,newtempz3
-
-  ! faults
-  real(kind=CUSTOM_REAL) :: eta
 
   ! local C-PML absorbing boundary conditions parameters
   integer :: ispec_CPML
@@ -1051,6 +1108,9 @@
     num_elements = nspec_inner_elastic
   endif
 
+  ! checks if anything to do
+  if (num_elements == 0) return
+
 ! openmp solver
 !$OMP PARALLEL if (num_elements > 100) &
 !$OMP DEFAULT(NONE) &
@@ -1061,7 +1121,6 @@
 !$OMP displ,veloc,accel, &
 !$OMP is_CPML,backward_simulation, &
 !$OMP xixstore,xiystore,xizstore,etaxstore,etaystore,etazstore,gammaxstore,gammaystore,gammazstore, &
-!$OMP Kelvin_Voigt_eta,USE_KELVIN_VOIGT_DAMPING, &
 !$OMP COMPUTE_AND_STORE_STRAIN,SIMULATION_TYPE, &
 !$OMP epsilondev_xx,epsilondev_yy,epsilondev_xy,epsilondev_xz,epsilondev_yz,epsilon_trace_over_3, &
 !$OMP spec_to_CPML,PML_displ_old,PML_displ_new, &
@@ -1078,7 +1137,7 @@
 #ifdef FORCE_VECTORIZATION
 !$OMP ijk, &
 #endif
-!$OMP xixl,xiyl,xizl,etaxl,etayl,etazl,gammaxl,gammayl,gammazl,eta, &
+!$OMP xixl,xiyl,xizl,etaxl,etayl,etazl,gammaxl,gammayl,gammazl, &
 !$OMP duxdxl,duxdyl,duxdzl,duydxl,duydyl,duydzl,duzdxl,duzdyl,duzdzl, &
 !$OMP hp1,hp2,hp3,fac1,fac2,fac3, &
 !$OMP dummyx_loc,dummyy_loc,dummyz_loc, &
@@ -1131,12 +1190,12 @@
 
     ! stores displacement values in local array
 
-    ! checks
-    if (USE_KELVIN_VOIGT_DAMPING) then
-      ! Kelvin Voigt damping: artificial viscosity around dynamic faults
-      eta = Kelvin_Voigt_eta(ispec)
-      if (is_CPML(ispec) .and. eta /= 0._CUSTOM_REAL) stop 'Error: you cannot put a fault inside a PML layer'
-    endif
+    ! checks w/ PML (done in prepare_timerun_pml())
+    !if (USE_KELVIN_VOIGT_DAMPING) then
+    !  ! Kelvin Voigt damping: artificial viscosity around dynamic faults
+    !  eta = Kelvin_Voigt_eta(ispec)
+    !  if (is_CPML(ispec) .and. eta /= 0._CUSTOM_REAL) stop 'Error: you cannot put a fault inside a PML layer'
+    !endif
 
     ! displacement only (without damping)
     ! note: this loop will not fully vectorize because it contains a dependency
@@ -1416,7 +1475,7 @@
     !endif
 
     ! computes deviatoric strain for kernel calculations
-    ! (maybe not really needed, but will keep for now based on a "pure" acoustic element contribution)
+    ! (maybe not really needed, but will keep for now based on a "pure" elastic element contribution)
     if (COMPUTE_AND_STORE_STRAIN) then
       ! non-attenuation case
       DO_LOOP_IJK
@@ -1715,9 +1774,12 @@
   subroutine mxm5_3comp_singleA(A,n1,B1,B2,B3,C1,C2,C3,n3)
 
 ! we can force inlining (Intel compiler)
+#if defined __INTEL_COMPILER
 !DIR$ ATTRIBUTES FORCEINLINE :: mxm5_3comp_singleA
+#else
 ! cray
 !DIR$ INLINEALWAYS mxm5_3comp_singleA
+#endif
 
 ! 3 different arrays for x/y/z-components, 2-dimensional arrays (25,5)/(5,25), same A matrix for all 3 component arrays
 
@@ -1736,7 +1798,9 @@
   ! matrix-matrix multiplication
   do j = 1,n3
 !DIR$ IVDEP
+#if defined __INTEL_COMPILER
 !DIR$ SIMD
+#endif
     do i = 1,n1
       C1(i,j) =  A(i,1) * B1(1,j) &
                + A(i,2) * B1(2,j) &
@@ -1765,9 +1829,12 @@
   subroutine mxm6_3comp_singleA(A,n1,B1,B2,B3,C1,C2,C3,n3)
 
 ! we can force inlining (Intel compiler)
+#if defined __INTEL_COMPILER
 !DIR$ ATTRIBUTES FORCEINLINE :: mxm6_3comp_singleA
+#else
 ! cray
 !DIR$ INLINEALWAYS mxm6_3comp_singleA
+#endif
 
 ! 3 different arrays for x/y/z-components, 2-dimensional arrays (36,6)/(6,36), same A matrix for all 3 component arrays
 
@@ -1786,7 +1853,9 @@
   ! matrix-matrix multiplication
   do j = 1,n3
 !DIR$ IVDEP
+#if defined __INTEL_COMPILER
 !DIR$ SIMD
+#endif
     do i = 1,n1
       C1(i,j) =  A(i,1) * B1(1,j) &
                + A(i,2) * B1(2,j) &
@@ -1818,9 +1887,12 @@
   subroutine mxm7_3comp_singleA(A,n1,B1,B2,B3,C1,C2,C3,n3)
 
 ! we can force inlining (Intel compiler)
+#if defined __INTEL_COMPILER
 !DIR$ ATTRIBUTES FORCEINLINE :: mxm7_3comp_singleA
+#else
 ! cray
 !DIR$ INLINEALWAYS mxm7_3comp_singleA
+#endif
 
 ! 3 different arrays for x/y/z-components, 2-dimensional arrays (49,7)/(7,49), same A matrix for all 3 component arrays
 
@@ -1839,7 +1911,9 @@
   ! matrix-matrix multiplication
   do j = 1,n3
 !DIR$ IVDEP
+#if defined __INTEL_COMPILER
 !DIR$ SIMD
+#endif
     do i = 1,n1
       C1(i,j) =  A(i,1) * B1(1,j) &
                + A(i,2) * B1(2,j) &
@@ -1874,9 +1948,12 @@
   subroutine mxm8_3comp_singleA(A,n1,B1,B2,B3,C1,C2,C3,n3)
 
 ! we can force inlining (Intel compiler)
+#if defined __INTEL_COMPILER
 !DIR$ ATTRIBUTES FORCEINLINE :: mxm8_3comp_singleA
+#else
 ! cray
 !DIR$ INLINEALWAYS mxm8_3comp_singleA
+#endif
 
 ! 3 different arrays for x/y/z-components, 2-dimensional arrays (64,8)/(8,64), same A matrix for all 3 component arrays
 
@@ -1895,7 +1972,9 @@
   ! matrix-matrix multiplication
   do j = 1,n3
 !DIR$ IVDEP
+#if defined __INTEL_COMPILER
 !DIR$ SIMD
+#endif
     do i = 1,n1
       C1(i,j) =  A(i,1) * B1(1,j) &
                + A(i,2) * B1(2,j) &
@@ -1934,9 +2013,12 @@
   subroutine mxm5_3comp_singleB(A1,A2,A3,n1,B,C1,C2,C3,n3)
 
 ! we can force inlining (Intel compiler)
+#if defined __INTEL_COMPILER
 !DIR$ ATTRIBUTES FORCEINLINE :: mxm5_3comp_singleB
+#else
 ! cray
 !DIR$ INLINEALWAYS mxm5_3comp_singleB
+#endif
 
 ! 3 different arrays for x/y/z-components, 2-dimensional arrays (25,5)/(5,25), same B matrix for all 3 component arrays
 
@@ -1955,7 +2037,9 @@
   ! matrix-matrix multiplication
   do j = 1,n3
 !DIR$ IVDEP
+#if defined __INTEL_COMPILER
 !DIR$ SIMD
+#endif
     do i = 1,n1
       C1(i,j) =  A1(i,1) * B(1,j) &
                + A1(i,2) * B(2,j) &
@@ -1984,9 +2068,12 @@
   subroutine mxm6_3comp_singleB(A1,A2,A3,n1,B,C1,C2,C3,n3)
 
 ! we can force inlining (Intel compiler)
+#if defined __INTEL_COMPILER
 !DIR$ ATTRIBUTES FORCEINLINE :: mxm6_3comp_singleB
+#else
 ! cray
 !DIR$ INLINEALWAYS mxm6_3comp_singleB
+#endif
 
 ! 3 different arrays for x/y/z-components, 2-dimensional arrays (36,6)/(6,36), same B matrix for all 3 component arrays
 
@@ -2005,7 +2092,9 @@
   ! matrix-matrix multiplication
   do j = 1,n3
 !DIR$ IVDEP
+#if defined __INTEL_COMPILER
 !DIR$ SIMD
+#endif
     do i = 1,n1
       C1(i,j) =  A1(i,1) * B(1,j) &
                + A1(i,2) * B(2,j) &
@@ -2037,9 +2126,12 @@
   subroutine mxm7_3comp_singleB(A1,A2,A3,n1,B,C1,C2,C3,n3)
 
 ! we can force inlining (Intel compiler)
+#if defined __INTEL_COMPILER
 !DIR$ ATTRIBUTES FORCEINLINE :: mxm6_3comp_singleB
+#else
 ! cray
 !DIR$ INLINEALWAYS mxm6_3comp_singleB
+#endif
 
 ! 3 different arrays for x/y/z-components, 2-dimensional arrays (49,7)/(7,49), same B matrix for all 3 component arrays
 
@@ -2058,7 +2150,9 @@
   ! matrix-matrix multiplication
   do j = 1,n3
 !DIR$ IVDEP
+#if defined __INTEL_COMPILER
 !DIR$ SIMD
+#endif
     do i = 1,n1
       C1(i,j) =  A1(i,1) * B(1,j) &
                + A1(i,2) * B(2,j) &
@@ -2093,9 +2187,12 @@
   subroutine mxm8_3comp_singleB(A1,A2,A3,n1,B,C1,C2,C3,n3)
 
 ! we can force inlining (Intel compiler)
+#if defined __INTEL_COMPILER
 !DIR$ ATTRIBUTES FORCEINLINE :: mxm6_3comp_singleB
+#else
 ! cray
 !DIR$ INLINEALWAYS mxm6_3comp_singleB
+#endif
 
 ! 3 different arrays for x/y/z-components, 2-dimensional arrays (64,8)/(8,64), same B matrix for all 3 component arrays
 
@@ -2114,7 +2211,9 @@
   ! matrix-matrix multiplication
   do j = 1,n3
 !DIR$ IVDEP
+#if defined __INTEL_COMPILER
 !DIR$ SIMD
+#endif
     do i = 1,n1
       C1(i,j) =  A1(i,1) * B(1,j) &
                + A1(i,2) * B(2,j) &
@@ -2153,9 +2252,12 @@
   subroutine mxm5_3comp_3dmat_single(A1,A2,A3,n1,B,n2,C1,C2,C3,n3)
 
 ! we can force inlining (Intel compiler)
+#if defined __INTEL_COMPILER
 !DIR$ ATTRIBUTES FORCEINLINE :: mxm5_3comp_3dmat_single
+#else
 ! cray
 !DIR$ INLINEALWAYS mxm5_3comp_3dmat_single
+#endif
 
 ! 3 different arrays for x/y/z-components, 3-dimensional arrays (5,5,5), same B matrix for all 3 component arrays
 
@@ -2175,7 +2277,9 @@
   do k = 1,n3
     do j = 1,n2
 !DIR$ IVDEP
+#if defined __INTEL_COMPILER
 !DIR$ SIMD
+#endif
       do i = 1,n1
         C1(i,j,k) =  A1(i,1,k) * B(1,j) &
                    + A1(i,2,k) * B(2,j) &
@@ -2205,9 +2309,12 @@
   subroutine mxm6_3comp_3dmat_single(A1,A2,A3,n1,B,n2,C1,C2,C3,n3)
 
 ! we can force inlining (Intel compiler)
+#if defined __INTEL_COMPILER
 !DIR$ ATTRIBUTES FORCEINLINE :: mxm6_3comp_3dmat_single
+#else
 ! cray
 !DIR$ INLINEALWAYS mxm6_3comp_3dmat_single
+#endif
 
 ! 3 different arrays for x/y/z-components, 3-dimensional arrays (6,6,6), same B matrix for all 3 component arrays
 
@@ -2227,7 +2334,9 @@
   do k = 1,n3
     do j = 1,n2
 !DIR$ IVDEP
+#if defined __INTEL_COMPILER
 !DIR$ SIMD
+#endif
       do i = 1,n1
         C1(i,j,k) =  A1(i,1,k) * B(1,j) &
                    + A1(i,2,k) * B(2,j) &
@@ -2260,9 +2369,12 @@
   subroutine mxm7_3comp_3dmat_single(A1,A2,A3,n1,B,n2,C1,C2,C3,n3)
 
 ! we can force inlining (Intel compiler)
+#if defined __INTEL_COMPILER
 !DIR$ ATTRIBUTES FORCEINLINE :: mxm7_3comp_3dmat_single
+#else
 ! cray
 !DIR$ INLINEALWAYS mxm7_3comp_3dmat_single
+#endif
 
 ! 3 different arrays for x/y/z-components, 3-dimensional arrays (7,7,7), same B matrix for all 3 component arrays
 
@@ -2282,7 +2394,9 @@
   do k = 1,n3
     do j = 1,n2
 !DIR$ IVDEP
+#if defined __INTEL_COMPILER
 !DIR$ SIMD
+#endif
       do i = 1,n1
         C1(i,j,k) =  A1(i,1,k) * B(1,j) &
                    + A1(i,2,k) * B(2,j) &
@@ -2318,9 +2432,12 @@
   subroutine mxm8_3comp_3dmat_single(A1,A2,A3,n1,B,n2,C1,C2,C3,n3)
 
 ! we can force inlining (Intel compiler)
+#if defined __INTEL_COMPILER
 !DIR$ ATTRIBUTES FORCEINLINE :: mxm8_3comp_3dmat_single
+#else
 ! cray
 !DIR$ INLINEALWAYS mxm8_3comp_3dmat_single
+#endif
 
 ! 3 different arrays for x/y/z-components, 3-dimensional arrays (8,8,8), same B matrix for all 3 component arrays
 
@@ -2340,7 +2457,9 @@
   do k = 1,n3
     do j = 1,n2
 !DIR$ IVDEP
+#if defined __INTEL_COMPILER
 !DIR$ SIMD
+#endif
       do i = 1,n1
         C1(i,j,k) =  A1(i,1,k) * B(1,j) &
                    + A1(i,2,k) * B(2,j) &

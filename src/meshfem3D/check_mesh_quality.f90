@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -39,7 +39,7 @@
                                 CREATE_VTK_FILES,prname)
 
   use constants, only: IMAIN,myrank,MAX_STRING_LEN,CUSTOM_REAL,HUGEVAL,OUTPUT_FILES
-  use constants_meshfem3D, only: NGLLX_M,NGLLY_M,NGLLZ_M
+  use constants_meshfem, only: NGLLX_M,NGLLY_M,NGLLZ_M
 
   implicit none
 
@@ -348,7 +348,7 @@
     endif
 
     ! vtk file output
-    call write_VTK_data_elem_cr_meshfem(nspec,nglob,x,y,z,ibool,tmp1,filename)
+    call write_VTK_data_elem_cr_meshfem(nspec,nglob,NGLLX_M,x,y,z,ibool,tmp1,filename)
 
     deallocate(tmp1)
   endif
@@ -366,7 +366,7 @@
                                         stability,distmin,distmax)
 
   use constants, only: NGNOD_EIGHT_CORNERS,PI,HUGEVAL
-  use constants_meshfem3D, only: NGLLX_M,NGLLY_M,NGLLZ_M
+  use constants_meshfem, only: NGLLX_M,NGLLY_M,NGLLZ_M
 
   implicit none
 

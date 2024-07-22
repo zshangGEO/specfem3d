@@ -1,8 +1,8 @@
 /*
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !    Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                             CNRS, France
@@ -137,8 +137,7 @@ __device__  __forceinline__ void compute_element_att_memory(int tx,int working_e
                                                             realw kappal,
                                                             realw_const_p factor_common_kappa,
                                                             realw_p R_trace,realw* R_trace_loc,
-                                                            realw_p epsilondev_trace,realw epsilondev_trace_loc
-                                                            ){
+                                                            realw_p epsilondev_trace,realw epsilondev_trace_loc){
 
   int ijk_ispec;
   int offset;
@@ -557,7 +556,6 @@ __device__  __forceinline__ void sum_hprimewgll_gamma(int I, int J, int K,
 
 // computes the spatial derivatives
 
-
 __device__  __forceinline__ void get_spatial_derivatives(realw* xixl,realw* xiyl,realw* xizl,
                                                          realw* etaxl,realw* etayl,realw* etazl,
                                                          realw* gammaxl,realw* gammayl,realw* gammazl,
@@ -583,7 +581,7 @@ __device__  __forceinline__ void get_spatial_derivatives(realw* xixl,realw* xiyl
     // local padded index
     int offset = ispec_irreg*NGLL3_PADDED + tx;
 
-    *xixl = get_global_cr( &d_xix[offset]);
+    *xixl = get_global_cr(&d_xix[offset]);
     *xiyl = get_global_cr(&d_xiy[offset]);
     *xizl = get_global_cr(&d_xiz[offset]);
     *etaxl = get_global_cr(&d_etax[offset]);
@@ -740,6 +738,8 @@ Kernel_2_noatt_iso_impl(const int nb_blocks_to_compute,
                         realw_const_p d_wgllwgll_xy,realw_const_p d_wgllwgll_xz,realw_const_p d_wgllwgll_yz,
                         realw_const_p d_kappav,
                         realw_const_p d_muv,
+                        const int pml_conditions,
+                        const int* d_is_CPML,
                         const int FORWARD_OR_ADJOINT){
 
 // elastic compute kernel without attenuation for isotropic elements
@@ -821,6 +821,13 @@ Kernel_2_noatt_iso_impl(const int nb_blocks_to_compute,
   // spectral-element id
   // iphase-1 and working_element-1 for Fortran->C array conventions
   working_element = d_phase_ispec_inner_elastic[bx + num_phase_ispec_elastic*(d_iphase-1)] - 1;
+
+  // PML
+  if (pml_conditions){
+    // PML elements will be computed later
+    if(d_is_CPML[working_element]) return;
+  }
+
   ispec_irreg = d_irregular_element_number[working_element] - 1;
 
   // local padded index
@@ -1043,6 +1050,8 @@ Kernel_2_noatt_iso_strain_impl(int nb_blocks_to_compute,
                               realw_p epsilondev_xz,realw_p epsilondev_yz,
                               realw_p epsilon_trace_over_3,
                               const int SIMULATION_TYPE,
+                              const int pml_conditions,
+                              const int* d_is_CPML,
                               const int FORWARD_OR_ADJOINT){
 
 // elastic compute kernel without attenuation for isotropic elements
@@ -1108,6 +1117,13 @@ Kernel_2_noatt_iso_strain_impl(int nb_blocks_to_compute,
   // spectral-element id
   // iphase-1 and working_element-1 for Fortran->C array conventions
   working_element = d_phase_ispec_inner_elastic[bx + num_phase_ispec_elastic*(d_iphase-1)] - 1;
+
+  // PML
+  if (pml_conditions){
+    // PML elements will be computed later
+    if(d_is_CPML[working_element]) return;
+  }
+
   ispec_irreg = d_irregular_element_number[working_element] - 1;
 
   // local padded index
@@ -1157,16 +1173,16 @@ Kernel_2_noatt_iso_strain_impl(int nb_blocks_to_compute,
   if (COMPUTE_AND_STORE_STRAIN) {
     // save deviatoric strain for Runge-Kutta scheme
     if (threadIdx.x < NGLL3) {
-      realw templ = 0.33333333333333333333f * (duxdxl + duydyl + duzdzl); // 1./3. = 0.33333
       // local storage: stresses at this current time step
+      realw templ = 0.33333333333333333333f * (duxdxl + duydyl + duzdzl); // 1./3. = 0.33333
+      // kernel simulations
+      if (SIMULATION_TYPE == 3){ epsilon_trace_over_3[tx + working_element*NGLL3] = templ; }
       // fortran: epsilondev_xx(:,:,:,ispec) = epsilondev_xx_loc(:,:,:)
       epsilondev_xx[tx + working_element*NGLL3] = duxdxl - templ; // epsilondev_xx_loc;
       epsilondev_yy[tx + working_element*NGLL3] = duydyl - templ; // epsilondev_yy_loc;
       epsilondev_xy[tx + working_element*NGLL3] = 0.5f * duxdyl_plus_duydxl; // epsilondev_xy_loc;
       epsilondev_xz[tx + working_element*NGLL3] = 0.5f * duzdxl_plus_duxdzl; // epsilondev_xz_loc;
       epsilondev_yz[tx + working_element*NGLL3] = 0.5f * duzdyl_plus_duydzl; //epsilondev_yz_loc;
-      // kernel simulations
-      if (SIMULATION_TYPE == 3){ epsilon_trace_over_3[tx + working_element*NGLL3] = templ; }
     } // threadIdx.x
   }
 
@@ -1254,6 +1270,8 @@ Kernel_2_noatt_iso_col_impl(int nb_blocks_to_compute,
                         realw_p epsilondev_xz,realw_p epsilondev_yz,
                         realw_p epsilon_trace_over_3,
                         const int SIMULATION_TYPE,
+                        const int pml_conditions,
+                        const int* d_is_CPML,
                         const int FORWARD_OR_ADJOINT){
 
 // elastic compute kernel without attenuation for isotropic elements
@@ -1328,6 +1346,13 @@ Kernel_2_noatt_iso_col_impl(int nb_blocks_to_compute,
     working_element = d_phase_ispec_inner_elastic[bx + num_phase_ispec_elastic*(d_iphase-1)] - 1;
   }
 #endif
+
+  // PML
+  if (pml_conditions){
+    // PML elements will be computed later
+    if(d_is_CPML[working_element]) return;
+  }
+
   // local padded index
   offset = working_element*NGLL3_PADDED + tx;
 
@@ -1404,16 +1429,16 @@ Kernel_2_noatt_iso_col_impl(int nb_blocks_to_compute,
   if (COMPUTE_AND_STORE_STRAIN) {
     // save deviatoric strain for Runge-Kutta scheme
     if (threadIdx.x < NGLL3) {
-      realw templ = 0.33333333333333333333f * (duxdxl + duydyl + duzdzl); // 1./3. = 0.33333
       // local storage: stresses at this current time step
+      realw templ = 0.33333333333333333333f * (duxdxl + duydyl + duzdzl); // 1./3. = 0.33333
+      // kernel simulations
+      if (SIMULATION_TYPE == 3){ epsilon_trace_over_3[tx + working_element*NGLL3] = templ; }
       // fortran: epsilondev_xx(:,:,:,ispec) = epsilondev_xx_loc(:,:,:)
       epsilondev_xx[tx + working_element*NGLL3] = duxdxl - templ; // epsilondev_xx_loc;
       epsilondev_yy[tx + working_element*NGLL3] = duydyl - templ; // epsilondev_yy_loc;
       epsilondev_xy[tx + working_element*NGLL3] = 0.5f * duxdyl_plus_duydxl; // epsilondev_xy_loc;
       epsilondev_xz[tx + working_element*NGLL3] = 0.5f * duzdxl_plus_duxdzl; // epsilondev_xz_loc;
       epsilondev_yz[tx + working_element*NGLL3] = 0.5f * duzdyl_plus_duydzl; //epsilondev_yz_loc;
-      // kernel simulations
-      if (SIMULATION_TYPE == 3){ epsilon_trace_over_3[tx + working_element*NGLL3] = templ; }
     } // threadIdx.x
   }
 
@@ -1573,6 +1598,8 @@ Kernel_2_noatt_iso_grav_impl(int nb_blocks_to_compute,
                              realw_const_p d_minus_deriv_gravity,
                              realw_const_p d_rhostore,
                              realw_const_p wgll_cube,
+                             const int pml_conditions,
+                             const int* d_is_CPML,
                              const int FORWARD_OR_ADJOINT){
 
 // elastic compute kernel without attenuation for isotropic elements
@@ -1653,6 +1680,13 @@ Kernel_2_noatt_iso_grav_impl(int nb_blocks_to_compute,
     working_element = d_phase_ispec_inner_elastic[bx + num_phase_ispec_elastic*(d_iphase-1)] - 1;
   }
 #endif
+
+  // PML
+  if (pml_conditions){
+    // PML elements will be computed later
+    if(d_is_CPML[working_element]) return;
+  }
+
   ispec_irreg = d_irregular_element_number[working_element] - 1;
 
   // local padded index
@@ -1702,16 +1736,16 @@ Kernel_2_noatt_iso_grav_impl(int nb_blocks_to_compute,
   if (COMPUTE_AND_STORE_STRAIN) {
     // save deviatoric strain for Runge-Kutta scheme
     if (threadIdx.x < NGLL3) {
-      realw templ = 0.33333333333333333333f * (duxdxl + duydyl + duzdzl); // 1./3. = 0.33333
       // local storage: stresses at this current time step
+      realw templ = 0.33333333333333333333f * (duxdxl + duydyl + duzdzl); // 1./3. = 0.33333
+      // kernel simulations
+      if (SIMULATION_TYPE == 3){ epsilon_trace_over_3[tx + working_element*NGLL3] = templ; }
       // fortran: epsilondev_xx(:,:,:,ispec) = epsilondev_xx_loc(:,:,:)
       epsilondev_xx[tx + working_element*NGLL3] = duxdxl - templ; // epsilondev_xx_loc;
       epsilondev_yy[tx + working_element*NGLL3] = duydyl - templ; // epsilondev_yy_loc;
       epsilondev_xy[tx + working_element*NGLL3] = 0.5f * duxdyl_plus_duydxl; // epsilondev_xy_loc;
       epsilondev_xz[tx + working_element*NGLL3] = 0.5f * duzdxl_plus_duxdzl; // epsilondev_xz_loc;
       epsilondev_yz[tx + working_element*NGLL3] = 0.5f * duzdyl_plus_duydzl; //epsilondev_yz_loc;
-      // kernel simulations
-      if (SIMULATION_TYPE == 3){ epsilon_trace_over_3[tx + working_element*NGLL3] = templ; }
     } // threadIdx.x
   }
 
@@ -1882,6 +1916,8 @@ Kernel_2_noatt_ani_impl(int nb_blocks_to_compute,
                         realw_const_p d_minus_deriv_gravity,
                         realw_const_p d_rhostore,
                         realw_const_p wgll_cube,
+                        const int pml_conditions,
+                        const int* d_is_CPML,
                         const int FORWARD_OR_ADJOINT){
 
 // elastic compute kernel without attenuation for anisotropic elements
@@ -1921,10 +1957,7 @@ Kernel_2_noatt_ani_impl(int nb_blocks_to_compute,
 
   realw fac1,fac2,fac3;
   realw lambdal,mul,lambdalplus2mul,kappal;
-
   realw sigma_xx,sigma_yy,sigma_zz,sigma_xy,sigma_xz,sigma_yz;
-  realw epsilondev_xx_loc,epsilondev_yy_loc,epsilondev_xy_loc,epsilondev_xz_loc,epsilondev_yz_loc;
-
   realw c11,c12,c13,c14,c15,c16,c22,c23,c24,c25,c26,c33,c34,c35,c36,c44,c45,c46,c55,c56,c66;
   realw sum_terms1,sum_terms2,sum_terms3;
 
@@ -1963,6 +1996,13 @@ Kernel_2_noatt_ani_impl(int nb_blocks_to_compute,
     working_element = d_phase_ispec_inner_elastic[bx + num_phase_ispec_elastic*(d_iphase-1)] - 1;
   }
 #endif
+
+  // PML
+  if (pml_conditions){
+    // PML elements will be computed later
+    if(d_is_CPML[working_element]) return;
+  }
+
   ispec_irreg = d_irregular_element_number[working_element] - 1;
 
   // local padded index
@@ -2010,17 +2050,19 @@ Kernel_2_noatt_ani_impl(int nb_blocks_to_compute,
 
   // computes deviatoric strain for kernel calculations
   if (COMPUTE_AND_STORE_STRAIN) {
-    realw templ = 0.33333333333333333333f * (duxdxl + duydyl + duzdzl); // 1./3. = 0.33333
-    // local storage: stresses at this current time step
-    epsilondev_xx_loc = duxdxl - templ;
-    epsilondev_yy_loc = duydyl - templ;
-    epsilondev_xy_loc = 0.5f * duxdyl_plus_duydxl;
-    epsilondev_xz_loc = 0.5f * duzdxl_plus_duxdzl;
-    epsilondev_yz_loc = 0.5f * duzdyl_plus_duydzl;
-
-    if (SIMULATION_TYPE == 3){
-      if (threadIdx.x < NGLL3) { epsilon_trace_over_3[tx + working_element*NGLL3] = templ; }
-    }
+    // save deviatoric strain
+    if (threadIdx.x < NGLL3) {
+      // local storage: stresses at this current time step
+      realw templ = 0.33333333333333333333f * (duxdxl + duydyl + duzdzl); // 1./3. = 0.33333
+      // kernel simulations
+      if (SIMULATION_TYPE == 3){ epsilon_trace_over_3[tx + working_element*NGLL3] = templ; }
+      // fortran: epsilondev_xx(:,:,:,ispec) = epsilondev_xx_loc(:,:,:)
+      epsilondev_xx[tx + working_element*NGLL3] = duxdxl - templ; // epsilondev_xx_loc;
+      epsilondev_yy[tx + working_element*NGLL3] = duydyl - templ; // epsilondev_yy_loc;
+      epsilondev_xy[tx + working_element*NGLL3] = 0.5f * duxdyl_plus_duydxl; // epsilondev_xy_loc;
+      epsilondev_xz[tx + working_element*NGLL3] = 0.5f * duzdxl_plus_duxdzl; // epsilondev_xz_loc;
+      epsilondev_yz[tx + working_element*NGLL3] = 0.5f * duzdyl_plus_duydzl; //epsilondev_yz_loc;
+    } // threadIdx.x
   }
 
   // full anisotropic case, stress calculations
@@ -2183,16 +2225,6 @@ Kernel_2_noatt_ani_impl(int nb_blocks_to_compute,
 
 #endif // MESH_COLORING
 
-    // save deviatoric strain for Runge-Kutta scheme
-    if (COMPUTE_AND_STORE_STRAIN ){
-      // fortran: epsilondev_xx(:,:,:,ispec) = epsilondev_xx_loc(:,:,:)
-      epsilondev_xx[tx + working_element*NGLL3] = epsilondev_xx_loc;
-      epsilondev_yy[tx + working_element*NGLL3] = epsilondev_yy_loc;
-      epsilondev_xy[tx + working_element*NGLL3] = epsilondev_xy_loc;
-      epsilondev_xz[tx + working_element*NGLL3] = epsilondev_xz_loc;
-      epsilondev_yz[tx + working_element*NGLL3] = epsilondev_yz_loc;
-    }
-
   } // threadIdx.x
 
 } // kernel_2_noatt_ani_impl()
@@ -2230,13 +2262,14 @@ Kernel_2_att_impl(int nb_blocks_to_compute,
                   realw_const_p d_kappav,realw_const_p d_muv,
                   realw_p epsilondev_xx,realw_p epsilondev_yy,realw_p epsilondev_xy,
                   realw_p epsilondev_xz,realw_p epsilondev_yz,
+                  realw_p epsilondev_trace,
                   realw_p epsilon_trace_over_3,
                   const int SIMULATION_TYPE,
                   const int NSPEC,
                   realw_const_p factor_common,
                   realw_p R_xx,realw_p R_yy,realw_p R_xy,realw_p R_xz,realw_p R_yz,
+                  realw_p R_trace,
                   realw_const_p factor_common_kappa,
-                  realw_p R_trace,realw_p epsilondev_trace,
                   realw_const_p alphaval,realw_const_p betaval,realw_const_p gammaval,
                   const int ANISOTROPY,
                   realw_const_p d_c11store,realw_const_p d_c12store,realw_const_p d_c13store,
@@ -2251,6 +2284,8 @@ Kernel_2_att_impl(int nb_blocks_to_compute,
                   realw_const_p d_minus_deriv_gravity,
                   realw_const_p d_rhostore,
                   realw_const_p wgll_cube,
+                  const int pml_conditions,
+                  const int* d_is_CPML,
                   const int FORWARD_OR_ADJOINT){
 
 
@@ -2333,6 +2368,13 @@ Kernel_2_att_impl(int nb_blocks_to_compute,
     working_element = d_phase_ispec_inner_elastic[bx + num_phase_ispec_elastic*(d_iphase-1)]-1;
   }
 #endif
+
+  // PML
+  if (pml_conditions){
+    // PML elements will be computed later
+    if(d_is_CPML[working_element]) return;
+  }
+
   ispec_irreg = d_irregular_element_number[working_element] - 1;
 
   // local padded index
@@ -2370,8 +2412,6 @@ Kernel_2_att_impl(int nb_blocks_to_compute,
 #endif
   }
 
-// JC JC here we will need to add GPU support for the new C-PML routines
-
   // synchronize all the threads (one thread for each of the NGLL grid points of the
   // current spectral element) because we need the whole element to be ready in order
   // to be able to compute the matrix products along cut planes of the 3D element below
@@ -2393,17 +2433,18 @@ Kernel_2_att_impl(int nb_blocks_to_compute,
 
   // attenuation
   // computes deviatoric strain attenuation and/or for kernel calculations
-  templ = 0.33333333333333333333f * (duxdxl + duydyl + duzdzl); // 1./3. = 0.33333
   // local storage: stresses at this current time step
+  epsilondev_trace_loc = duxdxl + duydyl + duzdzl;
+  templ = 0.33333333333333333333f * (duxdxl + duydyl + duzdzl); // 1./3. = 0.33333
+  // kernel simulations
+  if (SIMULATION_TYPE == 3){
+    if (threadIdx.x < NGLL3) { epsilon_trace_over_3[tx + working_element*NGLL3] = templ; }
+  }
   epsilondev_xx_loc = duxdxl - templ;
   epsilondev_yy_loc = duydyl - templ;
   epsilondev_xy_loc = 0.5f * (duxdyl + duydxl);
   epsilondev_xz_loc = 0.5f * (duzdxl + duxdzl);
   epsilondev_yz_loc = 0.5f * (duzdyl + duydzl);
-  epsilondev_trace_loc = duxdxl + duydyl + duzdzl;
-  if (SIMULATION_TYPE == 3){
-    if (threadIdx.x < NGLL3) { epsilon_trace_over_3[tx + working_element*NGLL3] = templ; }
-  }
 
   // computes the spatial derivatives duxdxl ... depending on the regularity of the element
   get_spatial_derivatives(&xixl,&xiyl,&xizl,&etaxl,&etayl,&etazl,
@@ -2495,7 +2536,7 @@ Kernel_2_att_impl(int nb_blocks_to_compute,
   sigma_zx = sigma_xz;
   sigma_zy = sigma_yz;
 
-  if (gravity ){
+  if (gravity){
     //  computes non-symmetric terms for gravity
     compute_element_gravity(tx,working_element,&iglob,d_minus_g,d_minus_deriv_gravity,
                             d_rhostore,wgll_cube,jacobianl,
@@ -2503,8 +2544,6 @@ Kernel_2_att_impl(int nb_blocks_to_compute,
                             &sigma_xx,&sigma_yy,&sigma_xz,&sigma_yz,
                             &rho_s_H1,&rho_s_H2,&rho_s_H3);
   }
-
-// JC JC here we will need to add GPU support for the new C-PML routines
 
   // form dot product with test vector, symmetric form
   // 1. cut-plane xi
@@ -2534,13 +2573,11 @@ Kernel_2_att_impl(int nb_blocks_to_compute,
   sum_terms3 = - (fac1*tempz1l + fac2*tempz2l + fac3*tempz3l);
 
   // adds gravity term
-  if (gravity ){
+  if (gravity){
     sum_terms1 += rho_s_H1;
     sum_terms2 += rho_s_H2;
     sum_terms3 += rho_s_H3;
   }
-
-// JC JC here we will need to add GPU support for the new C-PML routines
 
   // assembles acceleration array
   if (threadIdx.x < NGLL3) {
@@ -2567,7 +2604,7 @@ Kernel_2_att_impl(int nb_blocks_to_compute,
 #else // MESH_COLORING
 
     //mesh coloring
-    if (use_mesh_coloring_gpu ){
+    if (use_mesh_coloring_gpu){
 
       // no atomic operation needed, colors don't share global points between elements
 #ifdef USE_TEXTURES_FIELDS
@@ -2618,8 +2655,6 @@ Kernel_2_att_impl(int nb_blocks_to_compute,
     epsilondev_yz[tx + working_element*NGLL3] = epsilondev_yz_loc;
     epsilondev_trace[tx + working_element*NGLL3] = epsilondev_trace_loc;
   } // threadIdx.x
-
-// JC JC here we will need to add GPU support for the new C-PML routines
 
 } // kernel_2_att_impl()
 
@@ -2771,8 +2806,6 @@ Kernel_2_att_org_impl(int nb_blocks_to_compute,
     // copy displacement from global memory to shared memory
     load_shared_memory_displ<FORWARD_OR_ADJOINT>(&tx,&iglob,d_displ,s_dummyx_loc,s_dummyy_loc,s_dummyz_loc);
 
-// JC JC here we will need to add GPU support for the new C-PML routines
-
     // attenuation
     // use first order Taylor expansion of displacement for local storage of stresses
     // at this current time step, to fix attenuation in a consistent way
@@ -2831,8 +2864,6 @@ Kernel_2_att_org_impl(int nb_blocks_to_compute,
       tempy3l += s_dummyy_loc[l*NGLL2+J*NGLLX+I]*fac3;
       tempz3l += s_dummyz_loc[l*NGLL2+J*NGLLX+I]*fac3;
     }
-
-// JC JC here we will need to add GPU support for the new C-PML routines
 
     // attenuation
     // temporary variables used for fixing attenuation in a consistent way
@@ -2920,8 +2951,6 @@ Kernel_2_att_org_impl(int nb_blocks_to_compute,
             + s_dummyz_loc[3*NGLL2+J*NGLLX+I]*d_hprime_xx[3*NGLLX+K]
             + s_dummyz_loc[4*NGLL2+J*NGLLX+I]*d_hprime_xx[4*NGLLX+K];
 
-// JC JC here we will need to add GPU support for the new C-PML routines
-
     // attenuation
     // temporary variables used for fixing attenuation in a consistent way
     tempx1l_att = s_dummyx_loc_att[K*NGLL2+J*NGLLX]*d_hprime_xx[I]
@@ -3006,8 +3035,6 @@ Kernel_2_att_org_impl(int nb_blocks_to_compute,
     duzdyl = xiyl*tempz1l + etayl*tempz2l + gammayl*tempz3l;
     duzdzl = xizl*tempz1l + etazl*tempz2l + gammazl*tempz3l;
 
-// JC JC here we will need to add GPU support for the new C-PML routines
-
     // precompute some sums to save CPU time
     duxdxl_plus_duydyl = duxdxl + duydyl;
     duxdxl_plus_duzdzl = duxdxl + duzdzl;
@@ -3015,8 +3042,6 @@ Kernel_2_att_org_impl(int nb_blocks_to_compute,
     duxdyl_plus_duydxl = duxdyl + duydxl;
     duzdxl_plus_duxdzl = duzdxl + duxdzl;
     duzdyl_plus_duydzl = duzdyl + duydzl;
-
-// JC JC here we will need to add GPU support for the new C-PML routines
 
     // attenuation
     // temporary variables used for fixing attenuation in a consistent way
@@ -3164,8 +3189,6 @@ Kernel_2_att_org_impl(int nb_blocks_to_compute,
   // to be able to compute the matrix products along cut planes of the 3D element below
   __syncthreads();
 
-// JC JC here we will need to add GPU support for the new C-PML routines
-
   if (active ){
 
 #ifndef MANUALLY_UNROLLED_LOOPS
@@ -3283,10 +3306,7 @@ Kernel_2_att_org_impl(int nb_blocks_to_compute,
     d_accel[iglob*3 + 2] += sum_terms3;
 #endif // USE_TEXTURES_FIELDS
 
-// JC JC here we will need to add GPU support for the new C-PML routines
-
 #else // MESH_COLORING
-
     //mesh coloring
     if (use_mesh_coloring_gpu ){
 
@@ -3328,8 +3348,6 @@ Kernel_2_att_org_impl(int nb_blocks_to_compute,
     epsilondev_yz[tx + working_element*NGLL3] = epsilondev_yz_loc;
   } // if (active)
 
-// JC JC here we will need to add GPU support for the new C-PML routines
-
 } // kernel_2_att_impl()
 
 */
@@ -3361,6 +3379,8 @@ Kernel_2_noatt_iso_kelvinvoigt_impl(const int nb_blocks_to_compute,
                                     realw_const_p d_wgllwgll_xy,realw_const_p d_wgllwgll_xz,realw_const_p d_wgllwgll_yz,
                                     realw_const_p d_kappav,
                                     realw_const_p d_muv,
+                                    const int pml_conditions,
+                                    const int* d_is_CPML,
                                     const int FORWARD_OR_ADJOINT){
 
 // elastic compute kernel without attenuation for isotropic elements with kelvin voigt damping aroung the fault
@@ -3420,6 +3440,13 @@ Kernel_2_noatt_iso_kelvinvoigt_impl(const int nb_blocks_to_compute,
   // spectral-element id
   // iphase-1 and working_element-1 for Fortran->C array conventions
   working_element = d_phase_ispec_inner_elastic[bx + num_phase_ispec_elastic*(d_iphase-1)] - 1;
+
+  // PML
+  if (pml_conditions){
+    // PML elements will be computed later
+    if(d_is_CPML[working_element]) return;
+  }
+
   ispec_irreg = d_irregular_element_number[working_element] - 1;
 
   // local padded index

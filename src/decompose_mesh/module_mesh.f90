@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -36,9 +36,14 @@ module module_mesh
   integer,               dimension(:,:),        allocatable  :: elmnts, elmnts_glob
   integer,               dimension(:,:),        allocatable  :: mat
 
+  integer                                                    :: nspec_part_boundaries
+  integer,               dimension(:,:),        allocatable  :: elmnts_part_boundaries
+  integer,               dimension(:),          allocatable  :: iboundary
+
   ! vertices
   integer                                                    :: nnodes, nnodes_glob
   double precision,      dimension(:,:),         allocatable :: nodes_coords, nodes_coords_glob
+  double precision,      dimension(:,:),         allocatable :: nodes_coords_open_loc
 
   ! boundaries
   integer                                                    :: ispec2D
@@ -74,11 +79,16 @@ module module_mesh
 
   !! acoustic-elastic-poroelastic as well as CPML load balancing:
   !! we define here the relative cost of all types of spectral elements used in the code.
-  double precision, parameter :: ACOUSTIC_LOAD     = 1.d0
-  double precision, parameter :: ELASTIC_LOAD      = 4.1d0
-  double precision, parameter :: VISCOELASTIC_LOAD = 5.9d0
-  double precision, parameter :: POROELASTIC_LOAD  = 8.1d0
-
+  !!
+  !! note: here, the parallel decomposer (xdecompose_mesh_mpi) uses a double precision array for the loads,
+  !!       whereas the serial decomposer (xdecompose_mesh) requires the load arrays to be in integers.
+  !!       thus, for the serial decompose, we multiply below loads by a factor 10 since only the relative loads are important.
+  !!       (see integer loads in part_decompose_mesh.F90)
+  !!
+  double precision, parameter :: ACOUSTIC_LOAD_DBLE     = 1.d0
+  double precision, parameter :: ELASTIC_LOAD_DBLE      = 4.1d0
+  double precision, parameter :: VISCOELASTIC_LOAD_DBLE = 5.9d0
+  double precision, parameter :: POROELASTIC_LOAD_DBLE  = 8.1d0
 
   ! default mesh file directory
   character(len=MAX_STRING_LEN) :: localpath_name
@@ -108,6 +118,10 @@ contains
     double precision                                         :: vp,vs,rho,qkappa,qmu
     ! poroelastic parameters read in a new file
     double precision :: rhos,rhof,phi,tort,kxx,kxy,kxz,kyy,kyz,kzz,kappas,kappaf,kappafr,eta,mufr
+    ! position
+    double precision :: x_coord,y_coord,z_coord
+    integer, dimension(NGNOD) :: elmnts_ids
+    integer :: mat_flag
 
     localpath_name='./MESH'
 
@@ -121,17 +135,25 @@ contains
     read(IIN_DB,*) nnodes_glob
 
     if (nnodes_glob < 1) stop 'Error: nnodes_glob < 1'
+
     allocate(nodes_coords_glob(NDIM,nnodes_glob),stat=ier)
     if (ier /= 0) call exit_MPI_without_rank('error allocating array 117')
     if (ier /= 0) stop 'Error allocating array nodes_coords'
-    do inode = 1, nnodes_glob
-       ! format: #id_node #x_coordinate #y_coordinate #z_coordinate
-       read(IIN_DB,*) num_node, nodes_coords_glob(1,num_node), nodes_coords_glob(2,num_node), nodes_coords_glob(3,num_node)
+    nodes_coords_glob(:,:) = 0.d0
 
-       ! for parallel meshing
-       if (mod(inode,100000) == 0) then
-          write(27,'(2i10)') num_node/100000, nnodes_glob/100000
-       endif
+    do inode = 1, nnodes_glob
+      ! format: #id_node #x_coordinate #y_coordinate #z_coordinate
+      read(IIN_DB,*) num_node,x_coord,y_coord,z_coord
+
+      ! stores coordinates
+      nodes_coords_glob(1,num_node) = x_coord
+      nodes_coords_glob(2,num_node) = y_coord
+      nodes_coords_glob(3,num_node) = z_coord
+
+      ! for parallel meshing
+      if (mod(inode,100000) == 0) then
+        write(27,'(2i10)') num_node/100000, nnodes_glob/100000
+      endif
     enddo
     close(IIN_DB)
     write(27,*) 'total number of nodes: '
@@ -156,23 +178,29 @@ contains
     nspec_glob = nspec_long
 
     if (nspec_glob < 1) stop 'Error: nspec_glob < 1'
+
     allocate(elmnts_glob(NGNOD,nspec_glob),stat=ier)
     if (ier /= 0) call exit_MPI_without_rank('error allocating array 118')
     if (ier /= 0) stop 'Error allocating array elmnts'
+    elmnts_glob(:,:) = 0
+
     do ispec = 1, nspec_glob
-       ! format: # element_id  #id_node1 ... #id_node8
-       !      or # element_id  #id_node1 ... #id_node27
+      ! format: # element_id  #id_node1 ... #id_node8
+      !      or # element_id  #id_node1 ... #id_node27
 
-       ! note: be aware that here we can have different node ordering for a cube element;
-       !          the ordering from Cubit files might not be consistent for multiple volumes, or uneven, unstructured grids
-       !
-       !          here our code assumes that element ordering is:
-       !          at the bottom of the element, anticlock-wise, i.e.
-       !             point 1 = (0,0,0), point 2 = (0,1,0), point 3 = (1,1,0), point 4 = (1,0,0)
-       !          then top (positive z-direction) of element
-       !             point 5 = (0,0,1), point 6 = (0,1,1), point 7 = (1,1,1), point 8 = (1,0,1)
+      ! note: be aware that here we can have different node ordering for a cube element;
+      !          the ordering from Cubit files might not be consistent for multiple volumes, or uneven, unstructured grids
+      !
+      !          here our code assumes that element ordering is:
+      !          at the bottom of the element, anticlock-wise, i.e.
+      !             point 1 = (0,0,0), point 2 = (0,1,0), point 3 = (1,1,0), point 4 = (1,0,0)
+      !          then top (positive z-direction) of element
+      !             point 5 = (0,0,1), point 6 = (0,1,1), point 7 = (1,1,1), point 8 = (1,0,1)
 
-       read(IIN_DB,*,iostat=ier) num_elmnt,(elmnts_glob(inode,num_elmnt), inode=1,NGNOD)
+      read(IIN_DB,*,iostat=ier) num_elmnt,(elmnts_ids(inode), inode=1,NGNOD)
+
+      ! stores node ids
+      elmnts_glob(:,num_elmnt) = elmnts_ids(:)
 
        if (ier /= 0) then
           print *,'Error while attempting to read ',NGNOD,'element data values from the mesh file'
@@ -196,15 +224,21 @@ contains
     open(unit=IIN_DB, file=localpath_name(1:len_trim(localpath_name))//'/materials_file', &
          status='old', form='formatted',iostat=ier)
     if (ier /= 0) stop 'Error opening materials_file'
+
     allocate(mat(2,nspec_glob),stat=ier)
     if (ier /= 0) call exit_MPI_without_rank('error allocating array 119')
     if (ier /= 0) stop 'Error allocating array mat'
     mat(:,:) = 0
+
     do ispec = 1, nspec_glob
-       ! format: #id_element #flag
-       ! note: be aware that elements may not be sorted in materials_file
-       read(IIN_DB,*) num_mat,mat(1,num_mat)
-       if ((num_mat > nspec_glob) .or. (num_mat < 1)) stop "Error : Invalid materials_file"
+      ! format: #id_element #flag
+      ! note: be aware that elements may not be sorted in materials_file
+      read(IIN_DB,*) num_mat,mat_flag
+
+      ! store material number
+      mat(1,num_mat) = mat_flag
+
+      if ((num_mat > nspec_glob) .or. (num_mat < 1)) stop "Error : Invalid materials_file"
     enddo
     close(IIN_DB)
 
@@ -767,9 +801,10 @@ contains
     if (nspec2D_moho > 0) write(27,*) '  nspec2D_moho = ', nspec2D_moho
 
     call read_fault_files(localpath_name)
+
     if (ANY_FAULT) then
-       call save_nodes_coords(nodes_coords,nnodes)
-       call close_faults(nodes_coords,nnodes)
+       call save_nodes_coords(nodes_coords_glob,nnodes_glob)
+       call close_faults(nodes_coords_glob,nnodes_glob)
     endif
 
   end subroutine read_mesh_files
@@ -789,27 +824,22 @@ contains
 
     allocate(load_elmnts(nspec_glob),stat=ier)
     if (ier /= 0) call exit_MPI_without_rank('error allocating array 140')
+    load_elmnts(:) = ACOUSTIC_LOAD_DBLE
 
-    call  acoustic_elastic_poro_load (load_elmnts,nspec_glob,count_def_mat,count_undef_mat, &
-                                    num_material,mat_prop,undef_mat_prop,ATTENUATION)
+    call  acoustic_elastic_poro_load_dble(load_elmnts,nspec_glob,count_def_mat,count_undef_mat, &
+                                          num_material,mat_prop,undef_mat_prop,ATTENUATION)
 
   end subroutine compute_load_elemnts
 
-
-end module module_mesh
-
-
-!-----------------------------  other subroutines -------------------------------------------------------
 
   !--------------------------------------------------
   ! loading : sets weights for acoustic/elastic/poroelastic elements to account for different
   !               expensive calculations in specfem simulations
   !--------------------------------------------------
+  subroutine acoustic_elastic_poro_load_dble(load_elmnts,nspec,count_def_mat,count_undef_mat, &
+                                             num_material,mat_prop,undef_mat_prop,ATTENUATION)
 
-subroutine acoustic_elastic_poro_load (elmnts_load,nspec,count_def_mat,count_undef_mat, &
-                                    num_material,mat_prop,undef_mat_prop,ATTENUATION)
-
-  use module_mesh, only: MAX_STRING_LEN, ACOUSTIC_LOAD, ELASTIC_LOAD, VISCOELASTIC_LOAD, POROELASTIC_LOAD
+  !use module_mesh, only: MAX_STRING_LEN, ACOUSTIC_LOAD_DBLE, ELASTIC_LOAD_DBLE, VISCOELASTIC_LOAD_DBLE, POROELASTIC_LOAD_DBLE
   !
   ! note:
   !   acoustic material    = domainID 1  (stored in mat_prop(6,..) )
@@ -828,7 +858,7 @@ subroutine acoustic_elastic_poro_load (elmnts_load,nspec,count_def_mat,count_und
   character(len=MAX_STRING_LEN), dimension(6,count_undef_mat),    intent(in)  :: undef_mat_prop
 
   ! load weights
-  double precision,              dimension(1:nspec),              intent(out) :: elmnts_load
+  double precision,              dimension(1:nspec),              intent(inout) :: load_elmnts
 
   ! local parameters
   logical, dimension(:), allocatable  :: is_acoustic, is_elastic, is_poroelastic
@@ -846,68 +876,66 @@ subroutine acoustic_elastic_poro_load (elmnts_load,nspec,count_def_mat,count_und
   is_elastic(:) = .false.
   is_poroelastic(:) = .false.
 
-
   ! sets acoustic/elastic/poroelastic flags for defined materials
   do i = 1, count_def_mat
-     idomain_id = nint(mat_prop(7,i))
-     ! acoustic material has idomain_id 1
-     if (idomain_id == 1) then
-        is_acoustic(i) = .true.
-     endif
-     ! elastic material has idomain_id 2
-     if (idomain_id == 2) then
-        is_elastic(i) = .true.
-     endif
-     ! poroelastic material has idomain_id 3
-     if (idomain_id == 3) then
-        is_poroelastic(i) = .true.
-     endif
+    idomain_id = nint(mat_prop(7,i))
+    ! acoustic material has idomain_id 1
+    if (idomain_id == 1) then
+      is_acoustic(i) = .true.
+    endif
+    ! elastic material has idomain_id 2
+    if (idomain_id == 2) then
+      is_elastic(i) = .true.
+    endif
+    ! poroelastic material has idomain_id 3
+    if (idomain_id == 3) then
+      is_poroelastic(i) = .true.
+    endif
   enddo
 
   ! sets acoustic/elastic flags for undefined materials
   do i = 1, count_undef_mat
-     read(undef_mat_prop(6,i),*) idomain_id
-     ! acoustic material has idomain_id 1
-     if (idomain_id == 1) then
-        is_acoustic(-i) = .true.
-     endif
-     ! elastic material has idomain_id 2
-     if (idomain_id == 2) then
-        is_elastic(-i) = .true.
-     endif
+    read(undef_mat_prop(6,i),*) idomain_id
+    ! acoustic material has idomain_id 1
+    if (idomain_id == 1) then
+      is_acoustic(-i) = .true.
+    endif
+    ! elastic material has idomain_id 2
+    if (idomain_id == 2) then
+      is_elastic(-i) = .true.
+    endif
   enddo
-
 
   ! sets weights for elements
   do el = 0, nspec-1
-     ! note: num_material index can be negative for tomographic material definitions
-     ! acoustic element (cheap)
-     if (num_material(el+1) > 0) then
-        if (is_acoustic(num_material(el+1))) elmnts_load(el+1) = ACOUSTIC_LOAD
-        ! elastic element (expensive)
-        if (is_elastic(num_material(el+1))) then
-           if (ATTENUATION) then
-              elmnts_load(el+1) = VISCOELASTIC_LOAD
-           else
-              elmnts_load(el+1) = ELASTIC_LOAD
-           endif
-        endif
-        ! poroelastic element (very expensive)
-        if (is_poroelastic(num_material(el+1))) elmnts_load(el+1) = POROELASTIC_LOAD
-     else ! JC JC: beware! To modify to take into account the -200? flags used in C-PML boundary conditions
-        ! tomographic materials count as elastic
+    ! note: num_material index can be negative for tomographic material definitions
+    ! acoustic element (cheap)
+    if (num_material(el+1) > 0) then
+      if (is_acoustic(num_material(el+1))) load_elmnts(el+1) = ACOUSTIC_LOAD_DBLE
+      ! elastic element (expensive)
+      if (is_elastic(num_material(el+1))) then
         if (ATTENUATION) then
-           elmnts_load(el+1) = VISCOELASTIC_LOAD
+          load_elmnts(el+1) = VISCOELASTIC_LOAD_DBLE
         else
-           elmnts_load(el+1) = ELASTIC_LOAD
+          load_elmnts(el+1) = ELASTIC_LOAD_DBLE
         endif
-     endif
+      endif
+      ! poroelastic element (very expensive)
+      if (is_poroelastic(num_material(el+1))) load_elmnts(el+1) = POROELASTIC_LOAD_DBLE
+    else ! JC JC: beware! To modify to take into account the -200? flags used in C-PML boundary conditions
+      ! tomographic materials count as elastic
+      if (ATTENUATION) then
+        load_elmnts(el+1) = VISCOELASTIC_LOAD_DBLE
+      else
+        load_elmnts(el+1) = ELASTIC_LOAD_DBLE
+      endif
+    endif
   enddo
 
-end subroutine acoustic_elastic_poro_load
+  ! frees memory
+  deallocate(is_acoustic,is_elastic,is_poroelastic)
 
+  end subroutine acoustic_elastic_poro_load_dble
 
-
-
-
+end module module_mesh
 

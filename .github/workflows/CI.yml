@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Check for changes
       id: diff
@@ -29,9 +29,20 @@ jobs:
           export DIFF=$( git diff --name-only ${{ github.event.before }} $GITHUB_SHA )
           echo "  diff between ${{ github.event.before }} and $GITHUB_SHA"
         fi
-        echo "$DIFF"
+        echo "***"; echo "$DIFF"; echo "***"
         # Escape newlines (replace \n with %0A)
-        echo "::set-output name=diff::$( echo "$DIFF" | sed ':a;N;$!ba;s/\n/%0A/g' )"
+        # deprecated:
+        #echo "::set-output name=diff::$( echo "$DIFF" | sed ':a;N;$!ba;s/\n/%0A/g' )"
+        # new:
+        # replace new line with %0A - will result finding only one file with a very long name...
+        #echo "diff=$( echo "$DIFF" | sed ':a;N;$!ba;s/\n/%0A/g' )" >> $GITHUB_OUTPUT
+        # doesn't work...
+        #echo "diff=\"$DIFF\"" >> "$GITHUB_OUTPUT"
+        # new multi-line format:
+        # (https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#multiline-strings)
+        echo "diff<<EOF" >> $GITHUB_OUTPUT
+        echo "$DIFF" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
 
     - name: Output changes
       run: echo "${{ steps.diff.outputs.diff }}"
@@ -75,7 +86,7 @@ jobs:
     needs: changesCheck
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install dependencies
       run: |
@@ -91,6 +102,16 @@ jobs:
         echo "mpif90  --version"
         mpif90 --version
         echo ""
+        ## avoids sed -i '' issue on MacOS, using gnu sed to have the same sed command lines as in linux
+        brew install gnu-sed
+        echo "PATH=/usr/local/opt/gnu-sed/libexec/gnubin:$PATH" >> $GITHUB_ENV
+        ## OpenMP
+        echo "OMP_NUM_THREADS=2" >> $GITHUB_ENV
+        ## avoids MPI issue with number of slots
+        echo "OMPI_MCA_rmaps_base_oversubscribe=1" >> $GITHUB_ENV
+        echo "OMPI_MCA_rmaps_base_inherit=1" >> $GITHUB_ENV
+        ## avoids MPI issue when running in MacOS
+        echo "OMPI_MCA_btl=self,tcp" >> $GITHUB_ENV
         # exports for xterm output (for make tests)
         echo "TERM=xterm" >> $GITHUB_ENV
         echo ""
@@ -118,10 +139,10 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-latest,ubuntu-18.04]
+        os: [ubuntu-latest,ubuntu-20.04]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -140,11 +161,11 @@ jobs:
     needs: changesCheck
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Cache Intel oneapi packages
       id: cache-intel-oneapi
-      uses: actions/cache@v2
+      uses: actions/cache@v3
       with:
         path: /opt/intel/oneapi
         key: install-${{ runner.os }}-all
@@ -158,8 +179,12 @@ jobs:
         sudo echo "deb https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
         sudo apt-get update
         echo ""
-        echo "packages intel oneapi:"
-        sudo apt-get install -y intel-oneapi-compiler-fortran intel-oneapi-compiler-dpcpp-cpp-and-cpp-classic intel-oneapi-mpi intel-oneapi-mpi-devel
+        # info
+        #sudo -E apt-cache pkgnames intel | grep intel-oneapi
+        #echo ""
+        echo "installing packages intel oneapi:"
+        sudo apt-get install -y intel-oneapi-compiler-fortran-2023.2.2 intel-oneapi-compiler-dpcpp-cpp-and-cpp-classic-2023.2.2 intel-oneapi-mpi intel-oneapi-mpi-devel
+        echo ""
 
     - name: compiler infos
       run: |
@@ -167,22 +192,54 @@ jobs:
         source /opt/intel/oneapi/setvars.sh
         echo ""
         echo "compiler versions:"
+        echo "icx --version"
+        which icx
+        icx --version
+        echo ""
         echo "icc --version"
+        which icc
         icc --version
+        echo ""
+        echo "ifx --version"
+        which ifx
+        ifx --version
+        echo ""
         echo "ifort --version"
+        which ifort
         ifort --version
+        echo ""
         echo "mpiifort --version"
+        which mpiifort
         mpiifort --version
+        echo ""
         echo "mpif90 --version"
+        which mpif90
         mpif90 --version
         echo ""
-        export TERM=xterm
-        echo "exports:"
-        export
-        echo ""
+        # infos
         which ifort
         which icc
         which mpiifort
+        echo "mpirun:"
+        which mpirun
+        echo ""
+        # intel setup for running tests
+        echo ""
+        echo "replacing mpif90 with mpiifort link:"
+        sudo ln -sf $(which mpiifort) $(which mpif90)
+        mpif90 --version
+        echo ""
+        # debug
+        #export I_MPI_DEBUG=5,pid,host
+        #export I_MPI_LIBRARY_KIND=debug
+        # remove -ftrapuv which leads to issues for running tests
+        sed -i "s/-ftrapuv//g" flags.guess
+        # environment setting
+        export TERM=xterm
+        # export info
+        echo "exports:"
+        export
+        echo ""
         echo ""
         printenv >> $GITHUB_ENV
         echo "CXX=icpc" >> $GITHUB_ENV
@@ -191,7 +248,8 @@ jobs:
         echo ""
 
     - name: configure serial debug
-      run: ./configure --enable-debug --without-mpi FC=ifort CC=icc
+      run: |
+        ./configure --enable-debug --without-mpi FC=ifort CC=icc
 
     - name: make serial debug
       run: |
@@ -200,7 +258,8 @@ jobs:
         make clean
 
     - name: configure serial
-      run: ./configure --without-mpi FC=ifort CC=icc
+      run: |
+        ./configure --without-mpi FC=ifort CC=icc
 
     - name: make serial
       run: |
@@ -208,7 +267,8 @@ jobs:
         make clean
 
     - name: configure parallel debug
-      run: ./configure --enable-debug --with-mpi FC=ifort CC=icc MPIFC=mpiifort MPI_INC="${I_MPI_ROOT}/include"
+      run: |
+        ./configure --enable-debug --with-mpi FC=ifort CC=icc MPIFC=mpiifort MPI_INC="${I_MPI_ROOT}/include"
 
     - name: make parallel debug
       run: |
@@ -217,16 +277,18 @@ jobs:
         make clean
 
     - name: configure parallel
-      run: ./configure --with-mpi FC=ifort CC=icc MPIFC=mpiifort MPI_INC="${I_MPI_ROOT}/include"
+      run: |
+        ./configure --with-mpi FC=ifort CC=icc MPIFC=mpiifort MPI_INC="${I_MPI_ROOT}/include"
 
     - name: make parallel
       run: |
         make -j2 all
         make clean
 
-    # check: fails due to intel MPI issue with mpif90 using gfortran as default on virtual nodes
-    #- name: make tests
-    #  run: make tests
+    # note: fails with -ftrapuv flag due to MPI issue on virtual nodes
+    - name: make tests
+      run: |
+        make tests
 
   linuxTest_0:
     name: Test run example 0 - make tests
@@ -234,7 +296,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -253,7 +315,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -267,7 +329,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/meshfem3D_examples/simple_model/
+        TESTDIR: EXAMPLES/applications/meshfem3D_examples/simple_model/
       run: ./.github/scripts/run_tests.sh
       shell: bash
 
@@ -277,7 +339,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -291,7 +353,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/fault_examples/tpv5/
+        TESTDIR: EXAMPLES/applications/fault_examples/tpv5/
       run: ./.github/scripts/run_tests.sh
       shell: bash
 
@@ -301,7 +363,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -316,7 +378,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/layered_halfspace/
+        TESTDIR: EXAMPLES/applications/layered_halfspace/
       run: ./.github/scripts/run_tests.sh
       shell: bash
 
@@ -326,7 +388,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -340,7 +402,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/small_adjoint_multiple_sources/
+        TESTDIR: EXAMPLES/applications/small_adjoint_multiple_sources/
       run: ./.github/scripts/run_tests.sh
       shell: bash
 
@@ -350,7 +412,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -364,7 +426,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/meshfem3D_examples/socal1D/
+        TESTDIR: EXAMPLES/applications/meshfem3D_examples/socal1D/
         TESTID: 0
       run: ./.github/scripts/run_tests.sh
       shell: bash
@@ -375,7 +437,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -389,7 +451,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/meshfem3D_examples/socal1D/
+        TESTDIR: EXAMPLES/applications/meshfem3D_examples/socal1D/
         TESTID: 1
       run: ./.github/scripts/run_tests.sh
       shell: bash
@@ -400,7 +462,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -414,7 +476,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/meshfem3D_examples/socal1D/
+        TESTDIR: EXAMPLES/applications/meshfem3D_examples/socal1D/
         TESTID: 2
       run: ./.github/scripts/run_tests.sh
       shell: bash
@@ -426,7 +488,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -440,7 +502,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/meshfem3D_examples/socal1D/
+        TESTDIR: EXAMPLES/applications/meshfem3D_examples/socal1D/
         TESTID: 3
       run: ./.github/scripts/run_tests.sh
       shell: bash
@@ -451,7 +513,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -465,7 +527,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/small_example_coupling_FK_specfem/
+        TESTDIR: EXAMPLES/applications/small_example_coupling_FK_specfem/
       run: ./.github/scripts/run_tests.sh
       shell: bash
 
@@ -475,7 +537,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -489,7 +551,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/homogeneous_halfspace_HEX8_elastic_no_absorbing/
+        TESTDIR: EXAMPLES/applications/homogeneous_halfspace_HEX8_elastic_no_absorbing/
       run: ./.github/scripts/run_tests.sh
       shell: bash
 
@@ -499,7 +561,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -513,7 +575,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/homogeneous_poroelastic/
+        TESTDIR: EXAMPLES/applications/homogeneous_poroelastic/
       run: ./.github/scripts/run_tests.sh
       shell: bash
 
@@ -523,7 +585,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -537,7 +599,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/CPML_examples/homogeneous_halfspace_HEX8_elastic_absorbing_CPML_5sides/
+        TESTDIR: EXAMPLES/applications/CPML_examples/homogeneous_halfspace_HEX8_elastic_absorbing_CPML_5sides/
       run: ./.github/scripts/run_tests.sh
       shell: bash
 
@@ -547,7 +609,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -561,7 +623,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/CPML_examples/homogeneous_halfspace_HEX8_acoustic_absorbing_CPML_5sides/
+        TESTDIR: EXAMPLES/applications/CPML_examples/homogeneous_halfspace_HEX8_acoustic_absorbing_CPML_5sides/
       run: ./.github/scripts/run_tests.sh
       shell: bash
 
@@ -571,7 +633,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -585,7 +647,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/waterlayered_halfspace/
+        TESTDIR: EXAMPLES/applications/waterlayered_halfspace/
       run: ./.github/scripts/run_tests.sh
       shell: bash
 
@@ -595,7 +657,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -609,7 +671,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/tomographic_model/
+        TESTDIR: EXAMPLES/applications/tomographic_model/
       run: ./.github/scripts/run_tests.sh
       shell: bash
 
@@ -619,7 +681,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -633,7 +695,7 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/meshfem3D_examples/cavity/
+        TESTDIR: EXAMPLES/applications/meshfem3D_examples/cavity/
       run: ./.github/scripts/run_tests.sh
       shell: bash
 
@@ -643,7 +705,7 @@ jobs:
     needs: [linuxCheck]
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install packages
       run: ./.github/scripts/run_install.sh
@@ -657,8 +719,35 @@ jobs:
 
     - name: Run test
       env:
-        TESTDIR: EXAMPLES/meshfem3D_examples/sep_bathymetry/
+        TESTDIR: EXAMPLES/applications/meshfem3D_examples/sep_bathymetry/
       run: ./.github/scripts/run_tests.sh
       shell: bash
 
+  linuxTest_18:
+    name: Test run example 18 - socal1D hdf5 i/o
+    runs-on: ubuntu-latest
+    needs: [linuxCheck]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install packages
+      env:
+        TEST: with-hdf5
+      run: ./.github/scripts/run_install.sh
+      shell: bash
+
+    - name: Run build
+      env:
+        TESTFLAGS: --with-mpi --with-hdf5 HDF5_INC=/usr/include/hdf5/openmpi/ HDF5_LIBS=-L/usr/lib/x86_64-linux-gnu/hdf5/openmpi
+      run: ./.github/scripts/run_build.sh
+      shell: bash
+
+    - name: Run test
+      env:
+        TEST: with-hdf5
+        TESTDIR: EXAMPLES/applications/meshfem3D_examples/socal1D/
+        TESTID: 0
+      run: ./.github/scripts/run_tests.sh
+      shell: bash
 

@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -27,21 +27,25 @@
 
 ! for elastic solver
 
-  subroutine compute_add_sources_viscoelastic()
+  subroutine compute_add_sources_viscoelastic(accel)
 
   use constants
-  use specfem_par, only: station_name,network_name,num_free_surface_faces,free_surface_ispec, &
-                        free_surface_ijk,free_surface_jacobian2Dw, &
-                        nsources_local,tshift_src,dt,t0,SU_FORMAT, &
-                        USE_LDDRK,istage,USE_EXTERNAL_SOURCE_FILE,user_source_time_function, &
-                        USE_BINARY_FOR_SEISMOGRAMS,NSPEC_AB,NGLOB_AB,ibool,NSOURCES,myrank,it,islice_selected_source, &
-                        ispec_selected_source,sourcearrays,SIMULATION_TYPE,NSTEP,READ_ADJSRC_ASDF, &
-                        nrec,islice_selected_rec,ispec_selected_rec, &
-                        NTSTEP_BETWEEN_READ_ADJSRC,NOISE_TOMOGRAPHY, &
-                        hxir_adjstore,hetar_adjstore,hgammar_adjstore,source_adjoint,number_adjsources_global,nadj_rec_local, &
-                        INVERSE_FWI_FULL_PROBLEM
 
-  use specfem_par_elastic, only: accel,ispec_is_elastic
+  use shared_parameters, only: DT, &
+    SIMULATION_TYPE,NOISE_TOMOGRAPHY,INVERSE_FWI_FULL_PROBLEM, &
+    USE_LDDRK,LTS_MODE, &
+    SU_FORMAT,USE_BINARY_FOR_SEISMOGRAMS, &
+    NSTEP,READ_ADJSRC_ASDF,NTSTEP_BETWEEN_READ_ADJSRC
+
+  use specfem_par, only: station_name,network_name, &
+    NSPEC_AB,NGLOB_AB,ibool, &
+    tshift_src,t0,istage,it, &
+    num_free_surface_faces,free_surface_ispec,free_surface_ijk,free_surface_jacobian2Dw, &
+    nsources_local,NSOURCES,islice_selected_source,ispec_selected_source,sourcearrays, &
+    nrec,islice_selected_rec,ispec_selected_rec, &
+    nadj_rec_local,hxir_adjstore,hetar_adjstore,hgammar_adjstore,source_adjoint,number_adjsources_global
+
+  use specfem_par_elastic, only: ispec_is_elastic
 
   ! noise
   use specfem_par_noise, only: noise_sourcearray,irec_main_noise, &
@@ -53,9 +57,14 @@
   ! faults
   use specfem_par, only: FAULT_SIMULATION
 
+  ! LTS
+  use specfem_par_lts, only: current_lts_time, current_lts_elem
+
   implicit none
 
-! local parameters
+  real(kind=CUSTOM_REAL), dimension(NDIM,NGLOB_AB), intent(inout) :: accel
+
+  ! local parameters
   real(kind=CUSTOM_REAL) :: stf_used,hlagrange
   logical :: ibool_read_adj_arrays
   double precision :: stf,time_source_dble,time_t
@@ -66,10 +75,6 @@
 
   character(len=MAX_STRING_LEN) :: adj_source_file
 
-  ! no source inside the mesh if we are coupling with DSM
-  ! because the source is precisely the wavefield coming from the DSM traction file
-  if (COUPLE_WITH_INJECTION_TECHNIQUE .and. SIMULATION_TYPE == 1) return
-
   ! sets current initial time
   if (USE_LDDRK) then
     ! LDDRK
@@ -78,6 +83,9 @@
     !       thus, at each time loop step it, displ(:) is still at (n) and not (n+1) like for the Newmark scheme
     !       when entering this routine. we therefore at an additional -DT to have the corresponding timing for the source.
     time_t = dble(it-1-1)*DT + dble(C_LDDRK(istage))*DT - t0
+  else if (LTS_MODE) then
+    ! current local time
+    time_t = current_lts_time
   else
     time_t = dble(it-1)*DT - t0
   endif
@@ -86,6 +94,10 @@
   if (SIMULATION_TYPE == 1 .and. NOISE_TOMOGRAPHY == 0 .and. nsources_local > 0) then
     ! ignore CMT sources for fault rupture simulations
     if (FAULT_SIMULATION) return
+
+    ! no source inside the mesh if we are coupling with DSM
+    ! because the source is precisely the wavefield coming from the DSM traction file
+    if (COUPLE_WITH_INJECTION_TECHNIQUE) return
 
 ! openmp solver
 !$OMP PARALLEL if (NSOURCES > 100) &
@@ -102,16 +114,19 @@
         ispec = ispec_selected_source(isource)
 
         if (ispec_is_elastic(ispec)) then
+          ! LTS
+          if (LTS_MODE) then
+            ! checks if source lies in this p-level LTS element
+            if (.not. current_lts_elem(ispec)) cycle
+            ! debug
+            !if (it==1) print *,'debug: lts add source time',time_t,it,isource
+          endif
+
           ! current time
           time_source_dble = time_t - tshift_src(isource)
 
-          !! add external source time function
-          if (USE_EXTERNAL_SOURCE_FILE) then
-             stf = user_source_time_function(it, isource)
-          else
-             ! determines source time function value
-             stf = get_stf_viscoelastic(time_source_dble,isource)
-          endif
+          ! determines source time function value
+          stf = get_stf_viscoelastic(time_source_dble,isource,it)
 
           ! distinguishes between single and double precision for reals
           stf_used = real(stf,kind=CUSTOM_REAL)
@@ -276,18 +291,18 @@
 !=====================================================================
 ! for elastic solver
 
-  subroutine compute_add_sources_viscoelastic_backward()
+  subroutine compute_add_sources_viscoelastic_backward(b_accel)
 
   use constants
   use specfem_par, only: num_free_surface_faces,free_surface_ispec, &
                         free_surface_ijk,free_surface_jacobian2Dw, &
                         nsources_local,tshift_src,dt,t0, &
-                        USE_LDDRK,istage,USE_EXTERNAL_SOURCE_FILE,user_source_time_function, &
+                        USE_LDDRK,istage, &
                         NSPEC_AB,NGLOB_AB,ibool, &
                         NSOURCES,myrank,it,islice_selected_source,ispec_selected_source, &
                         sourcearrays,SIMULATION_TYPE,NSTEP,NOISE_TOMOGRAPHY
 
-  use specfem_par_elastic, only: b_accel,ispec_is_elastic
+  use specfem_par_elastic, only: ispec_is_elastic
 
   ! noise
   use specfem_par_noise, only: normal_x_noise,normal_y_noise,normal_z_noise, &
@@ -305,6 +320,8 @@
 
   implicit none
 
+  real(kind=CUSTOM_REAL), dimension(NDIM,NGLOB_AB), intent(inout) :: b_accel
+
   ! local parameters
   real(kind=CUSTOM_REAL) stf_used
 
@@ -313,15 +330,15 @@
 
   integer :: isource,iglob,i,j,k,ispec,it_tmp
 
-  ! no source inside the mesh if we are coupling with DSM
-  ! because the source is precisely the wavefield coming from the DSM traction file
-  if (COUPLE_WITH_INJECTION_TECHNIQUE .and. SIMULATION_TYPE == 3) return
+  ! checks if anything to do
+  if (SIMULATION_TYPE /= 3) return
 
   ! ignore CMT sources for fault rupture simulations
   if (FAULT_SIMULATION) return
 
-  ! checks if anything to do
-  if (SIMULATION_TYPE /= 3) return
+  ! no source inside the mesh if we are coupling with DSM
+  ! because the source is precisely the wavefield coming from the DSM traction file
+  if (COUPLE_WITH_INJECTION_TECHNIQUE) return
 
   ! iteration step
   if (UNDO_ATTENUATION_AND_OR_PML) then
@@ -401,14 +418,8 @@
           ! current time
           time_source_dble = time_t - tshift_src(isource)
 
-          !! add external source time function
-          if (USE_EXTERNAL_SOURCE_FILE) then
-             ! time-reversed
-             stf = user_source_time_function(NSTEP-it+1, isource)
-          else
-             ! determines source time function value
-             stf = get_stf_viscoelastic(time_source_dble,isource)
-          endif
+          ! determines source time function value
+          stf = get_stf_viscoelastic(time_source_dble,isource,NSTEP-it+1)
 
           ! distinguishes between single and double precision for reals
           stf_used = real(stf,kind=CUSTOM_REAL)
@@ -437,7 +448,7 @@
       ! third step of noise tomography, i.e., read the surface movie saved at every timestep
       ! use the movie to reconstruct the ensemble forward wavefield
       ! the ensemble adjoint wavefield is done as usual
-      ! note instead of "NSTEP-it+1", now we us "it", since reconstruction is a reversal of reversal
+      ! note instead of "NSTEP-it+1", now we use "it", since reconstruction is a reversal of reversal
       call noise_read_add_surface_movie(NGLLSQUARE*num_free_surface_faces, &
                                         b_accel, &
                                         normal_x_noise,normal_y_noise,normal_z_noise,mask_noise, &
@@ -458,17 +469,21 @@
   subroutine compute_add_sources_viscoelastic_GPU()
 
   use constants
+
+  use shared_parameters, only: DT, &
+    SIMULATION_TYPE,NOISE_TOMOGRAPHY,INVERSE_FWI_FULL_PROBLEM, &
+    USE_LDDRK,LTS_MODE,GPU_MODE,UNDO_ATTENUATION_AND_OR_PML, &
+    SU_FORMAT,USE_BINARY_FOR_SEISMOGRAMS, &
+    NSTEP,NTSTEP_BETWEEN_READ_ADJSRC
+
   use specfem_par, only: station_name,network_name, &
-                        num_free_surface_faces, &
-                        nsources_local,tshift_src,dt,t0,SU_FORMAT, &
-                        USE_LDDRK,istage,USE_EXTERNAL_SOURCE_FILE,user_source_time_function,USE_BINARY_FOR_SEISMOGRAMS, &
-                        UNDO_ATTENUATION_AND_OR_PML, &
-                        NSOURCES,it,SIMULATION_TYPE,NSTEP, &
-                        nrec,islice_selected_rec, &
-                        nadj_rec_local,NTSTEP_BETWEEN_READ_ADJSRC,NOISE_TOMOGRAPHY, &
-                        Mesh_pointer, &
-                        source_adjoint,nadj_rec_local,number_adjsources_global, &
-                        INVERSE_FWI_FULL_PROBLEM,GPU_MODE
+    num_free_surface_faces, &
+    tshift_src,t0, &
+    istage,it, &
+    NSOURCES,nsources_local,ispec_selected_source, &
+    nrec,islice_selected_rec, &
+    nadj_rec_local,source_adjoint,nadj_rec_local,number_adjsources_global, &
+    Mesh_pointer
 
   use specfem_par_noise, only: irec_main_noise,noise_surface_movie
 
@@ -477,6 +492,9 @@
 
   ! faults
   use specfem_par, only: FAULT_SIMULATION
+
+  ! LTS
+  use specfem_par_lts, only: current_lts_time,current_lts_elem
 
   implicit none
 
@@ -492,10 +510,6 @@
 
   character(len=MAX_STRING_LEN) :: adj_source_file
 
-  ! no source inside the mesh if we are coupling with DSM
-  ! because the source is precisely the wavefield coming from the DSM traction file
-  if (COUPLE_WITH_INJECTION_TECHNIQUE .and. SIMULATION_TYPE == 1) return
-
   ! checks if anything to do
   if (.not. GPU_MODE) return
 
@@ -503,6 +517,10 @@
   if (SIMULATION_TYPE == 1 .and. NOISE_TOMOGRAPHY == 0 .and. nsources_local > 0) then
     ! ignore CMT sources for fault rupture simulations
     if (FAULT_SIMULATION) return
+
+    ! no source inside the mesh if we are coupling with DSM
+    ! because the source is precisely the wavefield coming from the DSM traction file
+    if (COUPLE_WITH_INJECTION_TECHNIQUE) return
 
     if (NSOURCES > 0) then
       ! sets current initial time
@@ -513,25 +531,41 @@
         !       thus, at each time loop step it, displ(:) is still at (n) and not (n+1) like for the Newmark scheme
         !       when entering this routine. we therefore at an additional -DT to have the corresponding timing for the source.
         time_t = dble(it-1-1)*DT + dble(C_LDDRK(istage))*DT - t0
+      else if (LTS_MODE) then
+        ! current LTS time
+        time_t = current_lts_time
       else
         time_t = dble(it-1)*DT - t0
+      endif
+
+      ! LTS
+      if (LTS_MODE) then
+        ! checks if anything to do
+        if (NSOURCES == 1 .and. (.not. current_lts_elem(ispec_selected_source(1)))) return
       endif
 
       do isource = 1,NSOURCES
         ! current time
         time_source_dble = time_t - tshift_src(isource)
 
-        !! add external source time function
-        if (USE_EXTERNAL_SOURCE_FILE) then
-           stf = user_source_time_function(it, isource)
-        else
-           ! determines source time function value
-           stf = get_stf_viscoelastic(time_source_dble,isource)
+        ! determines source time function value
+        stf = get_stf_viscoelastic(time_source_dble,isource,it)
+
+        ! LTS
+        if (LTS_MODE) then
+          ! only sources in elements contribute which are in current p-level
+          if (.not. current_lts_elem(ispec_selected_source(isource))) stf = 0.d0
         endif
 
         ! stores precomputed source time function factor
         stf_pre_compute(isource) = stf
       enddo
+
+      ! LTS
+      if (LTS_MODE) then
+        ! checks if anything to do
+        if (maxval(stf_pre_compute(:)) == 0.d0) return
+      endif
 
       ! only implements SIMTYPE=1 and NOISE_TOM=0
       ! write(*,*) "Fortran dt = ", dt
@@ -564,7 +598,7 @@
 !       adjoint source traces which start at -t0 and end at time (NSTEP-1)*DT - t0
 !       for step it=1: (NSTEP -it + 1)*DT - t0 for backward wavefields corresponds to time T
 
-! adjoint simulations
+  ! adjoint simulations
   if (SIMULATION_TYPE == 2 .or. SIMULATION_TYPE == 3) then
     ! adds adjoint source in this partitions
     if (nadj_rec_local > 0) then
@@ -618,10 +652,14 @@
 !           b_displ(it=1) corresponds to -t0 + (NSTEP-1)*DT.
 !           thus indexing is NSTEP - it , instead of NSTEP - it - 1
 
-! adjoint simulations
+  ! adjoint/backward wavefield
   if (SIMULATION_TYPE == 3 .and. NOISE_TOMOGRAPHY == 0 .and. nsources_local > 0) then
     ! ignore CMT sources for fault rupture simulations
     if (FAULT_SIMULATION) return
+
+    ! no source inside the mesh if we are coupling with DSM
+    ! nothing left to do, can exit routine...
+    if (COUPLE_WITH_INJECTION_TECHNIQUE) return
 
     if (NSOURCES > 0) then
       do isource = 1,NSOURCES
@@ -642,13 +680,8 @@
           time_source_dble = dble(NSTEP-it)*DT - t0 - tshift_src(isource)
         endif
 
-        !! add external source time function
-        if (USE_EXTERNAL_SOURCE_FILE) then
-           stf = user_source_time_function(NSTEP-it+1, isource)
-        else
-           ! determines source time function value
-           stf = get_stf_viscoelastic(time_source_dble,isource)
-        endif
+        ! determines source time function value
+        stf = get_stf_viscoelastic(time_source_dble,isource,NSTEP-it+1)
 
         ! stores precomputed source time function factor
         stf_pre_compute(isource) = stf
@@ -698,7 +731,7 @@
 
   use constants
   use specfem_par, only: nsources_local,tshift_src,dt,t0, &
-                        USE_LDDRK,istage,USE_EXTERNAL_SOURCE_FILE,user_source_time_function, &
+                        USE_LDDRK,istage, &
                         NSOURCES,it,SIMULATION_TYPE,NSTEP, &
                         NOISE_TOMOGRAPHY, &
                         Mesh_pointer,GPU_MODE
@@ -723,16 +756,16 @@
 
   integer :: isource,it_tmp
 
-  ! no source inside the mesh if we are coupling with DSM
-  ! because the source is precisely the wavefield coming from the DSM traction file
-  if (COUPLE_WITH_INJECTION_TECHNIQUE .and. SIMULATION_TYPE == 1) return
+  ! checks if anything to do
+  if (SIMULATION_TYPE /= 3) return
+  if (.not. GPU_MODE) return
 
   ! ignore CMT sources for fault rupture simulations
   if (FAULT_SIMULATION) return
 
-  ! checks if anything to do
-  if (SIMULATION_TYPE /= 3) return
-  if (.not. GPU_MODE) return
+  ! no source inside the mesh if we are coupling with DSM
+  ! because the source is precisely the wavefield coming from the DSM traction file
+  if (COUPLE_WITH_INJECTION_TECHNIQUE) return
 
   ! iteration step
   if (UNDO_ATTENUATION_AND_OR_PML) then
@@ -778,13 +811,10 @@
     do isource = 1,NSOURCES
       ! current time
       time_source_dble = time_t - tshift_src(isource)
-      !! add external source time function
-      if (USE_EXTERNAL_SOURCE_FILE) then
-         stf = user_source_time_function(it, isource)
-      else
-         ! determines source time function value
-         stf = get_stf_viscoelastic(time_source_dble,isource)
-      endif
+
+      ! determines source time function value
+      stf = get_stf_viscoelastic(time_source_dble,isource,NSTEP-it_tmp+1)
+
       ! stores precomputed source time function factor
       stf_pre_compute(isource) = stf
     enddo
@@ -804,52 +834,95 @@
 !=====================================================================
 !
 
-  double precision function get_stf_viscoelastic(time_source_dble,isource)
+  double precision function get_stf_viscoelastic(time_source_dble,isource,it_tmp_ext)
 
 ! returns source time function value for specified time
 
-  use specfem_par, only: USE_FORCE_POINT_SOURCE,USE_RICKER_TIME_FUNCTION,hdur,hdur_Gaussian
+  use constants, only: USE_MONOCHROMATIC_CMT_SOURCE
+
+  use specfem_par, only: USE_FORCE_POINT_SOURCE,USE_RICKER_TIME_FUNCTION, &
+                         hdur,hdur_Gaussian,force_stf
+
+  ! for external STFs
+  use specfem_par, only: USE_EXTERNAL_SOURCE_FILE
 
   implicit none
 
   double precision,intent(in) :: time_source_dble
   integer,intent(in) :: isource
+  integer,intent(in) :: it_tmp_ext
 
   ! local parameters
-  double precision :: stf
+  double precision :: stf,f0
 
   double precision, external :: comp_source_time_function,comp_source_time_function_rickr, &
-    comp_source_time_function_gauss
+    comp_source_time_function_gauss,comp_source_time_function_gauss_2, &
+    comp_source_time_function_brune,comp_source_time_function_smooth_brune, &
+    comp_source_time_function_mono,comp_source_time_function_ext
+
+  ! external source time function
+  if (USE_EXTERNAL_SOURCE_FILE) then
+    ! gets stf value
+    stf = comp_source_time_function_ext(it_tmp_ext,isource)
+
+    ! returns value
+    get_stf_viscoelastic = stf
+    return
+  endif
 
   ! determines source time function value
   if (USE_FORCE_POINT_SOURCE) then
     ! single point force
-    if (USE_RICKER_TIME_FUNCTION) then
-      ! Ricker
-      ! f0 has been stored in the hdur() array in the case of FORCESOLUTION,
-      ! to use the same array as for CMTSOLUTION
-      stf = comp_source_time_function_rickr(time_source_dble,hdur(isource))
-    else
-      ! Gaussian
-      ! stf = comp_source_time_function_gauss(time_source_dble,5.d0*DT)
-      !! COMMENTED BY FS FS -> do no longer use hard-coded hdur_Gaussian = 5*DT, but actual value of hdur_Gaussian
-
+    select case(force_stf(isource))
+    case (0)
+      ! Gaussian source time function value
       stf = comp_source_time_function_gauss(time_source_dble,hdur_Gaussian(isource))
-      !! ADDED BY FS FS -> use actual value of hdur_Gaussian as half duration
-    endif
+    case (1)
+      ! Ricker source time function
+      f0 = hdur(isource) ! using hdur as a FREQUENCY just to avoid changing FORCESOLUTION file format
+      stf = comp_source_time_function_rickr(time_source_dble,f0)
+    case (2)
+      ! Heaviside (step) source time function
+      stf = comp_source_time_function(time_source_dble,hdur_Gaussian(isource))
+    case (3)
+      ! Monochromatic source time function
+      f0 = 1.d0 / hdur(isource) ! using hdur as a PERIOD just to avoid changing FORCESOLUTION file format
+      stf = comp_source_time_function_mono(time_source_dble,f0)
+    case (4)
+      ! Gaussian source time function by Meschede et al. (2011)
+      stf = comp_source_time_function_gauss_2(time_source_dble,hdur(isource))
+    case (5)
+      ! Brune source time function
+      ! hdur is the source duration or the rise time
+      ! Frequency parameter:
+      f0=1.d0/hdur(isource)
+      stf = comp_source_time_function_brune(time_source_dble,f0)
+    case (6)
+      ! Smoothed Brune source time function
+      ! hdur is the source duration or the rise time
+      ! Frequency parameter:
+      f0=1.d0/hdur(isource)
+      stf = comp_source_time_function_smooth_brune(time_source_dble,f0)
+    case default
+      stop 'unsupported force_stf value!'
+    end select
   else
     ! moment-tensor
     if (USE_RICKER_TIME_FUNCTION) then
       ! Ricker
       stf = comp_source_time_function_rickr(time_source_dble,hdur(isource))
+    else if (USE_MONOCHROMATIC_CMT_SOURCE) then
+      ! Monochromatic source time function
+      f0 = 1.d0 / hdur(isource) ! using half duration as a FREQUENCY just to avoid changing CMTSOLUTION file format
+      stf = comp_source_time_function_mono(time_source_dble,f0)
     else
-      ! Heaviside
+      ! (quasi) Heaviside
       stf = comp_source_time_function(time_source_dble,hdur_Gaussian(isource))
     endif
 
-  ! source encoding
-  ! not supported yet for viscoelastic elements... sign of moment-tensor needs to be determined prior to running simulation
-  !if (USE_SOURCE_ENCODING) stf = stf * pm1_source_encoding(isource)
+    ! source encoding
+    ! not supported yet for viscoelastic elements... sign of moment-tensor needs to be determined prior to running simulation
+    !if (USE_SOURCE_ENCODING) stf = stf * pm1_source_encoding(isource)
 
   endif ! USE_FORCE_POINT_SOURCE
 

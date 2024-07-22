@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -53,21 +53,19 @@
 
   subroutine compute_forces_acoustic_forward_calling()
 
-! acoustic domains for forward or adjoint simulations (SIMULATION_TYPE == 1 or 2 )
+! acoustic domains for forward or adjoint wavefields
 
   use specfem_par
   use specfem_par_acoustic
   use specfem_par_elastic
   use specfem_par_poroelastic
 
-  use pml_par, only: is_CPML,spec_to_CPML,nglob_interface_PML_acoustic,b_PML_potential,b_reclen_PML_potential, &
-                     PML_potential_acoustic_old,PML_potential_acoustic_new
+  use pml_par, only: nglob_interface_PML_acoustic,b_PML_potential,b_reclen_PML_potential
+
 
   implicit none
 
   ! local parameters
-  integer:: iface,ispec,iglob,igll,i,j,k,ispec_CPML
-  ! non blocking MPI
   ! iphase: iphase = 1 is for computing outer elements (on MPI interface),
   !         iphase = 2 is for computing inner elements
   integer :: iphase
@@ -81,7 +79,9 @@
   ! GPU
   if (GPU_MODE) then
     ! checks if for kernel simulation with both, forward & backward fields
-    if (SIMULATION_TYPE == 3 .and. .not. UNDO_ATTENUATION_AND_OR_PML) then
+    if (SIMULATION_TYPE == 3 &
+        .and. .not. UNDO_ATTENUATION_AND_OR_PML &
+        .and. .not. (ELASTIC_SIMULATION .and. ACOUSTIC_SIMULATION)) then
       ! runs with the additionally optimized GPU routine
       ! (combines forward/backward fields in main compute_kernel_acoustic)
       call compute_forces_acoustic_GPU_calling()
@@ -94,7 +94,7 @@
   backward_simulation = .false.
 
   ! saftey check
-  if (GPU_MODE .and. PML_CONDITIONS) call exit_MPI(myrank,'PML conditions not yet implemented on GPUs')
+  if (GPU_MODE .and. PML_CONDITIONS) call exit_MPI(myrank,'PML conditions for acoustic domains not yet implemented on GPUs')
 
   ! enforces free surface (zeroes potentials at free surface)
   call acoustic_enforce_free_surface(NGLOB_AB,potential_acoustic,potential_dot_acoustic,potential_dot_dot_acoustic, &
@@ -107,8 +107,8 @@
   do iphase = 1,2
 
     !debug timing
-    if (DO_TIMING .and. myrank == 0 .and. iphase == 2) then
-      t_start = wtime()
+    if (DO_TIMING) then
+      if (myrank == 0 .and. iphase == 2) t_start = wtime()
     endif
 
     ! acoustic pressure term
@@ -122,9 +122,11 @@
     endif
 
     ! debug timing
-    if (DO_TIMING .and. myrank == 0 .and. iphase == 2) then
-      tCPU = wtime() - t_start
-      print *,'timing: compute_forces_acoustic elapsed time ',tCPU,'s'
+    if (DO_TIMING) then
+      if (myrank == 0 .and. iphase == 2) then
+        tCPU = wtime() - t_start
+        print *,'timing: compute_forces_acoustic elapsed time ',tCPU,'s'
+      endif
     endif
 
     ! computes additional contributions
@@ -143,7 +145,7 @@
         else
           ! on GPU
           call compute_stacey_acoustic_GPU(iphase,num_abs_boundary_faces, &
-                                           SIMULATION_TYPE,SAVE_FORWARD,NSTEP,it, &
+                                           NSTEP,it, &
                                            b_reclen_potential,b_absorb_potential, &
                                            b_num_abs_boundary_faces,Mesh_pointer,1) ! 1 == forward
         endif
@@ -209,7 +211,7 @@
       !
       if (.not. GPU_MODE) then
         ! on CPU
-        call compute_add_sources_acoustic()
+        call compute_add_sources_acoustic(potential_dot_dot_acoustic)
       else
         ! on GPU
         call compute_add_sources_acoustic_GPU()
@@ -283,31 +285,7 @@
 
 ! impose Dirichlet conditions for the potential (i.e. Neumann for displacement) on the outer edges of the C-PML layers
     if (PML_CONDITIONS .and. SET_NEUMANN_RATHER_THAN_DIRICHLET_FOR_FLUID_PMLs) then
-      do iface = 1,num_abs_boundary_faces
-        ispec = abs_boundary_ispec(iface)
-  !!! It is better to move this into do iphase=1,2 loop
-          if (ispec_is_acoustic(ispec) .and. is_CPML(ispec)) then
-            ! reference GLL points on boundary face
-            ispec_CPML = spec_to_CPML(ispec)
-            do igll = 1,NGLLSQUARE
-              ! gets local indices for GLL point
-              i = abs_boundary_ijk(1,igll,iface)
-              j = abs_boundary_ijk(2,igll,iface)
-              k = abs_boundary_ijk(3,igll,iface)
-
-              iglob=ibool(i,j,k,ispec)
-
-              potential_dot_dot_acoustic(iglob) = 0._CUSTOM_REAL
-              potential_dot_acoustic(iglob) = 0._CUSTOM_REAL
-              potential_acoustic(iglob) = 0._CUSTOM_REAL
-              if (ELASTIC_SIMULATION) then
-                PML_potential_acoustic_old(i,j,k,ispec_CPML) = 0._CUSTOM_REAL
-                PML_potential_acoustic_new(i,j,k,ispec_CPML) = 0._CUSTOM_REAL
-              endif
-            enddo
-          endif ! ispec_is_acoustic
-  !!!   endif
-      enddo
+      call pml_impose_boundary_condition_acoustic()
     endif
 
 ! update velocity
@@ -327,9 +305,11 @@
 !   updates the chi_dot term which requires chi_dot_dot(t+delta)
     ! corrector
     if (USE_LDDRK) then
+      ! LDDRK
       call update_potential_dot_acoustic_lddrk()
     else
-      potential_dot_acoustic(:) = potential_dot_acoustic(:) + deltatover2*potential_dot_dot_acoustic(:)
+      ! Newmark time scheme
+      call update_potential_dot_acoustic()
     endif
   else
     ! on GPU
@@ -412,7 +392,9 @@
   ! GPU
   if (GPU_MODE) then
     ! checks if for kernel simulation with both, forward & backward fields
-    if (SIMULATION_TYPE == 3 .and. .not. UNDO_ATTENUATION_AND_OR_PML) then
+    if (SIMULATION_TYPE == 3 &
+        .and. .not. UNDO_ATTENUATION_AND_OR_PML &
+        .and. .not. (ELASTIC_SIMULATION .and. ACOUSTIC_SIMULATION)) then
       ! runs with the additionally optimized GPU routine
       ! (combines forward/backward fields in main compute_kernel_acoustic)
       ! all done in compute_forces_acoustic_GPU_calling()
@@ -424,7 +406,7 @@
   backward_simulation = .true.
 
   ! saftey check
-  if (GPU_MODE .and. PML_CONDITIONS) call exit_MPI(myrank,'PML conditions not yet implemented on GPUs')
+  if (GPU_MODE .and. PML_CONDITIONS) call exit_MPI(myrank,'PML conditions for acoustic domains not yet implemented on GPUs')
 
   ! enforces free surface (zeroes potentials at free surface)
   call acoustic_enforce_free_surface(NGLOB_ADJOINT,b_potential_acoustic,b_potential_dot_acoustic,b_potential_dot_dot_acoustic, &
@@ -470,7 +452,7 @@
         else
           ! on GPU
           call compute_stacey_acoustic_GPU(iphase,num_abs_boundary_faces, &
-                                           SIMULATION_TYPE,SAVE_FORWARD,NSTEP,it, &
+                                           NSTEP,it, &
                                            b_reclen_potential,b_absorb_potential, &
                                            b_num_abs_boundary_faces,Mesh_pointer,3) ! 3 == backward
         endif
@@ -508,7 +490,7 @@
       !
       if (.not. GPU_MODE) then
         ! on CPU
-        call compute_add_sources_acoustic_backward()
+        call compute_add_sources_acoustic_backward(b_potential_dot_dot_acoustic)
       else
         ! on GPU
         call compute_add_sources_acoustic_backward_GPU()
@@ -591,7 +573,7 @@
       stop 'LDDRK scheme for backward propagation not implemented yet'
     else
       ! adjoint simulations
-      b_potential_dot_acoustic(:) = b_potential_dot_acoustic(:) + b_deltatover2*b_potential_dot_dot_acoustic(:)
+      call update_potential_dot_acoustic_backward()
     endif
   else
     ! on GPU
@@ -627,7 +609,7 @@
   ! safety check
   if (.not. GPU_MODE) return
   ! check
-  if (PML_CONDITIONS) call exit_MPI(myrank,'PML conditions not yet implemented on GPUs')
+  if (PML_CONDITIONS) call exit_MPI(myrank,'PML conditions for acoustic domains not yet implemented on GPUs')
 
   ! enforces free surface (zeroes potentials at free surface)
   call acoustic_enforce_free_surf_cuda(Mesh_pointer,STACEY_INSTEAD_OF_FREE_SURFACE,1)
@@ -645,7 +627,7 @@
       ! Stacey absorbing boundary conditions
       if (STACEY_ABSORBING_CONDITIONS) then
          call compute_stacey_acoustic_GPU(iphase,num_abs_boundary_faces, &
-                                          SIMULATION_TYPE,SAVE_FORWARD,NSTEP,it, &
+                                          NSTEP,it, &
                                           b_reclen_potential,b_absorb_potential, &
                                           b_num_abs_boundary_faces,Mesh_pointer,0) ! 0 == both
       endif

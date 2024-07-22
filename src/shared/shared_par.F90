@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -35,6 +35,11 @@ module constants
 
   ! a negative initial value is a convention that indicates that groups (i.e. sub-communicators, one per run) are off by default
   integer :: mygroup = -1
+
+  ! MPI status size (will be set in init_mpi()
+  integer :: my_status_size   = 1
+  integer :: my_status_source = 1
+  integer :: my_status_tag    = 1
 
   ! create a copy of the original output file path, to which we may add a "run0001/", "run0002/", "run0003/" prefix later
   ! if NUMBER_OF_SIMULTANEOUS_RUNS > 1
@@ -131,9 +136,14 @@ end module constants
   logical :: BROADCAST_SAME_MESH_AND_MODEL
 
   ! movies
-  logical :: CREATE_SHAKEMAP
-  logical :: MOVIE_SURFACE,MOVIE_VOLUME,SAVE_DISPLACEMENT,USE_HIGHRES_FOR_MOVIES
-  integer :: MOVIE_TYPE
+  logical :: CREATE_SHAKEMAP = .false.
+  logical :: MOVIE_SURFACE = .false.
+  logical :: MOVIE_VOLUME = .false.
+  logical :: SAVE_DISPLACEMENT = .false.
+  logical :: USE_HIGHRES_FOR_MOVIES = .false.
+  logical :: MOVIE_VOLUME_STRESS = .false.
+  integer :: MOVIE_TYPE = 1
+
   integer :: NTSTEP_BETWEEN_FRAMES
   double precision :: HDUR_MOVIE
 
@@ -144,8 +154,9 @@ end module constants
   ! seismograms
   integer :: NTSTEP_BETWEEN_OUTPUT_INFO
   integer :: NTSTEP_BETWEEN_OUTPUT_SEISMOS,NTSTEP_BETWEEN_READ_ADJSRC
-  integer :: subsamp_seismos
+  integer :: NTSTEP_BETWEEN_OUTPUT_SAMPLE ! subsamp_seismos is deprecated and renamed to NTSTEP_BETWEEN_OUTPUT_SAMPLE
   logical :: SAVE_SEISMOGRAMS_DISPLACEMENT,SAVE_SEISMOGRAMS_VELOCITY,SAVE_SEISMOGRAMS_ACCELERATION,SAVE_SEISMOGRAMS_PRESSURE
+  logical :: SAVE_SEISMOGRAMS_STRAIN
   logical :: SAVE_SEISMOGRAMS_IN_ADJOINT_RUN
   logical :: WRITE_SEISMOGRAMS_BY_MAIN,SAVE_ALL_SEISMOS_IN_ONE_FILE,USE_BINARY_FOR_SEISMOGRAMS,SU_FORMAT
   logical :: ASDF_FORMAT, READ_ADJSRC_ASDF
@@ -168,7 +179,22 @@ end module constants
 
   ! adios file output
   logical :: ADIOS_ENABLED
-  logical :: ADIOS_FOR_DATABASES, ADIOS_FOR_MESH, ADIOS_FOR_FORWARD_ARRAYS, ADIOS_FOR_KERNELS
+  logical :: ADIOS_FOR_DATABASES, ADIOS_FOR_MESH, ADIOS_FOR_FORWARD_ARRAYS, ADIOS_FOR_KERNELS, ADIOS_FOR_UNDO_ATTENUATION
+
+  ! HDF5 file i/o
+  logical :: HDF5_ENABLED = .false.              ! for all databases i/o in hdf5
+  logical :: HDF5_FOR_MOVIES = .false.           ! for movies (shakemap, surface movies, volume movies)
+
+  ! HDF5 seismogram output
+  logical :: HDF5_FORMAT  = .false.           ! for seismograms output in hdf5
+
+  ! HDF5 IO server
+  ! number of io dedicated nodes
+  integer :: HDF5_IO_NODES = 0
+
+  ! flag for io-dedicated/compute node.
+  logical :: IO_storage_task = .false.
+  logical :: IO_compute_task = .true.
 
   ! external code coupling (DSM, AxiSEM)
   logical :: COUPLE_WITH_INJECTION_TECHNIQUE
@@ -187,6 +213,7 @@ end module constants
   module shared_compute_parameters
 
   ! parameters to be computed based upon parameters above read from file
+  use constants, only: CUSTOM_REAL
 
   implicit none
 
@@ -209,6 +236,13 @@ end module constants
 
   ! fault rupture simulation
   logical :: FAULT_SIMULATION = .false.
+
+  ! free surface
+  ! for elevation search: x/y coordinates of free surface element midpoints
+  real(kind=CUSTOM_REAL), dimension(:,:), allocatable :: free_surface_xy_midpoints
+  real(kind=CUSTOM_REAL) :: free_surface_typical_size
+  ! flag to calculate typical size only once
+  logical :: free_surface_has_typical_size = .false.
 
   end module shared_compute_parameters
 

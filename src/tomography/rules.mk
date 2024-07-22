@@ -1,13 +1,13 @@
 #=====================================================================
 #
-#               S p e c f e m 3 D  V e r s i o n  3 . 0
-#               ---------------------------------------
+#                         S p e c f e m 3 D
+#                         -----------------
 #
 #     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-#                        Princeton University, USA
-#                and CNRS / University of Marseille, France
+#                              CNRS, France
+#                       and Princeton University, USA
 #                 (there are currently many more authors!)
-# (c) Princeton University and CNRS / University of Marseille, July 2012
+#                           (c) October 2017
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -39,7 +39,7 @@ tomography_TARGETS = \
 	$(EMPTY_MACRO)
 
 tomography_OBJECTS = \
-	$(xadd_model_iso_OBJECTS) \
+	$(xadd_model_OBJECTS) \
 	$(xmodel_update_OBJECTS) \
 	$(xsum_kernels_OBJECTS) \
 	$(xsum_preconditioned_kernels_OBJECTS) \
@@ -99,10 +99,11 @@ xsum_preconditioned_kernels: $E/xsum_preconditioned_kernels
 #######################################
 
 ##
-## add_model
+## xadd_model_iso
 ##
 xadd_model_OBJECTS = \
 	$O/tomography_par.tomo_module.o \
+	$O/add_model_iso.tomo.o \
 	$O/compute_kernel_integral.tomo.o \
 	$O/get_cg_direction.tomo.o \
 	$O/get_sd_direction.tomo.o \
@@ -119,27 +120,39 @@ xadd_model_SHARED_OBJECTS = \
 	$O/specfem3D_par.spec_module.o \
 	$O/pml_par.spec_module.o \
 	$O/read_mesh_databases.spec.o \
+	$O/read_mesh_databases_hdf5.spec_hdf5.o \
 	$O/shared_par.shared_module.o \
+	$O/adios_manager.shared_adios_module.o \
+	$O/count_number_of_sources.shared.o \
 	$O/create_name_database.shared.o \
 	$O/exit_mpi.shared.o \
 	$O/gll_library.shared.o \
+	$O/hdf5_manager.shared_hdf5_module.o \
 	$O/param_reader.cc.o \
 	$O/read_parameter_file.shared.o \
 	$O/read_value_parameters.shared.o \
 	$(EMPTY_MACRO)
 
-##
-## xadd_model_iso
-##
-xadd_model_iso_OBJECTS = \
-	$O/add_model_iso.tomo.o \
-	$(xadd_model_OBJECTS) \
-	$(EMPTY_MACRO)
+###
+### ADIOS
+###
+
+# conditional adios linking
+ifeq ($(ADIOS),yes)
+xadd_model_OBJECTS += $(adios_specfem3D_OBJECTS)
+xadd_model_SHARED_OBJECTS += $(adios_specfem3D_PREOBJECTS)
+else ifeq ($(ADIOS2),yes)
+xadd_model_OBJECTS += $(adios_specfem3D_OBJECTS)
+xadd_model_SHARED_OBJECTS += $(adios_specfem3D_PREOBJECTS)
+else
+xadd_model_OBJECTS += $(adios_specfem3D_STUBS)
+endif
+
 
 # extra dependencies
 $O/add_model_iso.tomo.o: $O/specfem3D_par.spec_module.o $O/tomography_par.tomo_module.o
 
-${E}/xadd_model_iso: $(xadd_model_iso_OBJECTS) $(xadd_model_SHARED_OBJECTS) $(COND_MPI_OBJECTS)
+${E}/xadd_model_iso: $(xadd_model_OBJECTS) $(xadd_model_SHARED_OBJECTS) $(COND_MPI_OBJECTS)
 	@echo ""
 	@echo "building xadd_model_iso"
 	@echo ""
@@ -164,60 +177,85 @@ xmodel_update_OBJECTS = \
 
 xmodel_update_SHARED_OBJECTS = \
 	$O/specfem3D_par.spec_module.o \
+	$O/asdf_data.spec_module.o \
 	$O/pml_par.spec_module.o \
+	$O/calendar.spec.o \
+	$O/comp_source_time_function.spec.o \
+	$O/compute_add_sources_viscoelastic.spec.o \
+	$O/compute_adj_source_frechet.spec.o \
+	$O/compute_arrays_source.spec.o \
+	$O/compute_element_strain.spec.o \
+	$O/compute_gradient_in_acoustic.spec.o \
+	$O/compute_interpolated_dva.spec.o \
+	$O/compute_seismograms.spec.o \
+	$O/get_cmt.spec.o \
+	$O/hdf5_io_server.spec_hdf5.o \
 	$O/initialize_simulation.spec.o \
+	$O/noise_tomography.spec.o \
+	$O/read_external_stf.spec.o \
 	$O/read_mesh_databases.spec.o \
+	$O/read_mesh_databases_hdf5.spec_hdf5.o \
+	$O/write_movie_output_HDF5.spec_hdf5.o \
+	$O/write_output_ASCII_or_binary.spec.o \
+	$O/write_output_HDF5.spec_hdf5.o \
+	$O/write_output_SU.spec.o \
+	$O/write_seismograms.spec.o \
+	$(EMPTY_MACRO)
+
+xmodel_update_SHARED_OBJECTS += \
 	$O/shared_par.shared_module.o \
+	$O/adios_manager.shared_adios_module.o \
 	$O/check_mesh_resolution.shared.o \
+	$O/count_number_of_sources.shared.o \
 	$O/create_name_database.shared.o \
+	$O/define_mass_matrices.shared.o \
 	$O/exit_mpi.shared.o \
 	$O/get_attenuation_model.shared.o \
 	$O/gll_library.shared.o \
+	$O/hdf5_manager.shared_hdf5_module.o \
 	$O/init_openmp.shared.o \
+	$O/lagrange_poly.shared.o \
+	$O/netlib_specfun_erf.shared.o \
 	$O/param_reader.cc.o \
 	$O/read_parameter_file.shared.o \
+	$O/read_topo_bathy_file.shared.o \
 	$O/read_value_parameters.shared.o \
+	$O/utm_geo.shared.o \
+	$O/write_c_binary.cc.o \
 	$O/write_VTK_data.shared.o \
 	$(EMPTY_MACRO)
 
 # cuda stubs
 xmodel_update_OBJECTS += $(gpu_specfem3D_STUBS)
 
-
-# using ADIOS files
-adios_model_update_OBJECTS= \
-	$O/read_mesh_databases_adios.spec_adios.o \
-	$O/read_forward_arrays_adios.spec_adios.o
-
-adios_model_update_SHARED_OBJECTS = \
-	$O/adios_manager.shared_adios.o \
-	$O/adios_helpers_definitions.shared_adios_module.o \
-	$O/adios_helpers_writers.shared_adios_module.o \
-	$O/adios_helpers.shared_adios.o
-
-adios_model_update_STUBS = \
-	$O/specfem3D_adios_stubs.spec_noadios.o
-
-adios_model_update_SHARED_STUBS = \
-	$O/adios_manager_stubs.shared_noadios.o
+###
+### ADIOS
+###
 
 # conditional adios linking
 ifeq ($(ADIOS),yes)
-xmodel_update_OBJECTS += $(adios_model_update_OBJECTS)
-xmodel_update_SHARED_OBJECTS += $(adios_model_update_SHARED_OBJECTS)
+xmodel_update_OBJECTS += $(adios_specfem3D_OBJECTS)
+xmodel_update_SHARED_OBJECTS += $(adios_specfem3D_PREOBJECTS)
+else ifeq ($(ADIOS2),yes)
+xmodel_update_OBJECTS += $(adios_specfem3D_OBJECTS)
+xmodel_update_SHARED_OBJECTS += $(adios_specfem3D_PREOBJECTS)
 else
-xmodel_update_OBJECTS += $(adios_model_update_STUBS)
-xmodel_update_SHARED_OBJECTS += $(adios_model_update_SHARED_STUBS)
+xmodel_update_OBJECTS += $(adios_specfem3D_STUBS)
 endif
 
 ###
 ### ASDF
 ###
 
-asdf_specfem3D_SHARED_STUBS = $(asdf_shared_STUBS)
-
 # conditional asdf linking
+ifeq ($(ASDF),yes)
+INVERSE_LINK_FLAGS += $(ASDF_LIBS)
+xmodel_update_OBJECTS += $(asdf_specfem3D_OBJECTS)
+xmodel_update_SHARED_OBJECTS += $(asdf_specfem3D_SHARED_OBJECTS)
+else
+xmodel_update_OBJECTS += $(asdf_specfem3D_STUBS)
 xmodel_update_SHARED_OBJECTS += $(asdf_specfem3D_SHARED_STUBS)
+endif
 
 # extra dependencies
 $O/model_update.tomo.o: $O/specfem3D_par.spec_module.o $O/tomography_par.tomo_module.o
@@ -241,6 +279,8 @@ xsum_kernels_OBJECTS = \
 
 xsum_kernels_SHARED_OBJECTS = \
 	$O/shared_par.shared_module.o \
+	$O/count_number_of_sources.shared.o \
+	$O/exit_mpi.shared.o \
 	$O/param_reader.cc.o \
 	$O/read_parameter_file.shared.o \
 	$O/read_value_parameters.shared.o \

@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -97,7 +97,8 @@
 
   ! user output
   if (myrank == 0) then
-    write(IMAIN,*) 'reading model for coupling or mesh a chunk of the earth...'
+    write(IMAIN,*)
+    write(IMAIN,*) '    reading model for coupling or mesh a chunk of the earth...'
     write(IMAIN,*)
     call flush_IMAIN()
   endif

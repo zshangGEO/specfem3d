@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -117,9 +117,9 @@
           if (SIMULATION_TYPE == 1) then
             ispec_CPML = spec_to_CPML(ispec)
             call pml_compute_memory_variables_elastic_acoustic(ispec_CPML,iface,iglob,i,j,k, &
-                                            pressure_x,pressure_y,pressure_z,potential_acoustic, &
-                                            potential_dot_acoustic,potential_dot_dot_acoustic, &
-                                            num_coupling_ac_el_faces,rmemory_coupling_el_ac_potential_dot_dot)
+                                                               pressure_x,pressure_y,pressure_z,potential_acoustic, &
+                                                               potential_dot_acoustic,potential_dot_dot_acoustic, &
+                                                               num_coupling_ac_el_faces,rmemory_coupling_el_ac_potential_dot_dot)
             pressure_x = - pressure_x
             pressure_y = - pressure_y
             pressure_z = - pressure_z
@@ -128,9 +128,9 @@
           if (SIMULATION_TYPE == 3) then
             ispec_CPML = spec_to_CPML(ispec)
             call pml_compute_memory_variables_elastic_acoustic(ispec_CPML,iface,iglob,i,j,k, &
-                                            pressure_x,pressure_y,pressure_z,potential_acoustic, &
-                                            potential_dot_acoustic,potential_dot_dot_acoustic, &
-                                            num_coupling_ac_el_faces,rmemory_coupling_el_ac_potential_dot_dot)
+                                                               pressure_x,pressure_y,pressure_z,potential_acoustic, &
+                                                               potential_dot_acoustic,potential_dot_dot_acoustic, &
+                                                               num_coupling_ac_el_faces,rmemory_coupling_el_ac_potential_dot_dot)
           endif
         endif
       endif

@@ -5,11 +5,16 @@ dnl
 dnl autoreconf -i
 dnl
 dnl You must have recent versions of Autoconf and Automake installed.
+dnl
+dnl using AC_CANONICAL_HOST required to provide config.sub and config.guess in this package.
+dnl to update these config.sub and config.guess files, a script is provided here:
+dnl ./utils/infos/update_config.sub_and_config.guess.sh
+dnl
 
 ############################################################
 
 AC_PREREQ(2.61)
-AC_INIT([Specfem3D], [3.0.0], [see the wiki], [Specfem3D])
+AC_INIT([Specfem3D], m4_normalize(m4_include([VERSION])), [see the wiki], [Specfem3D])
 AC_CONFIG_SRCDIR([src/specfem3D/specfem3D.F90])
 
 AC_CONFIG_HEADERS([setup/config.h])
@@ -71,9 +76,6 @@ AM_CONDITIONAL([COND_MPI], [test x"$want_mpi" = xyes])
 ### FORCE_VECTORIZATION
 ###
 
-## note: vectorization support has been removed by DK due to problems with Intel compilers (2016).
-##       enabling will have no effect.
-
 AC_ARG_ENABLE([vectorization],
     [AS_HELP_STRING([--enable-vectorization],
         [build FORCE_VECTORIZATION enabled version @<:@default=auto@:>@])],
@@ -116,6 +118,7 @@ AM_CONDITIONAL([COND_CUDA8], [test x"$want_cuda" = xcuda8])
 AM_CONDITIONAL([COND_CUDA9], [test x"$want_cuda" = xcuda9])
 AM_CONDITIONAL([COND_CUDA10], [test x"$want_cuda" = xcuda10])
 AM_CONDITIONAL([COND_CUDA11], [test x"$want_cuda" = xcuda11])
+AM_CONDITIONAL([COND_CUDA12], [test x"$want_cuda" = xcuda12])
 
 # cuda linking for cuda 5x and 6x and 7x and 8x and ..
 AM_CONDITIONAL([COND_CUDA_PLUS],
@@ -126,7 +129,8 @@ AM_CONDITIONAL([COND_CUDA_PLUS],
      -o "$want_cuda" = cuda8 \
      -o "$want_cuda" = cuda9 \
      -o "$want_cuda" = cuda10 \
-     -o "$want_cuda" = cuda11 \]
+     -o "$want_cuda" = cuda11 \
+     -o "$want_cuda" = cuda12 \]
 )
 
 ## HIP
@@ -139,6 +143,8 @@ AM_CONDITIONAL([COND_HIP_MI8], [test x"$want_hip" = xMI8])
 AM_CONDITIONAL([COND_HIP_MI25], [test x"$want_hip" = xMI25])
 AM_CONDITIONAL([COND_HIP_MI50], [test x"$want_hip" = xMI50])
 AM_CONDITIONAL([COND_HIP_MI100], [test x"$want_hip" = xMI100])
+AM_CONDITIONAL([COND_HIP_MI250], [test x"$want_hip" = xMI250])
+
 AM_CONDITIONAL([COND_HIP_CUDA5], [test x"$want_hip" = xcuda5])
 AM_CONDITIONAL([COND_HIP_CUDA6], [test x"$want_hip" = xcuda6])
 AM_CONDITIONAL([COND_HIP_CUDA7], [test x"$want_hip" = xcuda7])
@@ -146,22 +152,25 @@ AM_CONDITIONAL([COND_HIP_CUDA8], [test x"$want_hip" = xcuda8])
 AM_CONDITIONAL([COND_HIP_CUDA9], [test x"$want_hip" = xcuda9])
 AM_CONDITIONAL([COND_HIP_CUDA10], [test x"$want_hip" = xcuda10])
 AM_CONDITIONAL([COND_HIP_CUDA11], [test x"$want_hip" = xcuda11])
+AM_CONDITIONAL([COND_HIP_CUDA12], [test x"$want_hip" = xcuda12])
 
 ###
-### OPENMP
+### OpenMP
 ###
 
 AC_ARG_WITH([openmp],
     [AS_HELP_STRING([--with-openmp],
         [build OpenMP enabled version @<:@default=no@:>@])],
-    [want_with_omp="$withval"],
-    [want_with_omp=no])
+    [with_omp="$withval"],
+    [with_omp=no])
 AC_ARG_ENABLE([openmp],
     [AS_HELP_STRING([--enable-openmp],
         [build OpenMP enabled version @<:@default=no@:>@])],
-    [want_omp="$enableval"],
-    [want_omp=no])
-AM_CONDITIONAL([COND_OMP], [test x"$want_omp" != xno || test x"$want_with_omp" != xno])
+    [enable_omp="$enableval"],
+    [enable_omp=no])
+AS_IF([test x"$enable_omp" != xno || test x"$with_omp" != xno],
+    [want_omp=yes],[want_omp=no])
+AM_CONDITIONAL([COND_OMP], [test x"$want_omp" != xno])
 
 ###
 ### VTK
@@ -206,6 +215,17 @@ AC_ARG_WITH([asdf],
     [want_asdf="$withval"],
     [want_asdf=no])
 AM_CONDITIONAL([COND_ASDF], [test x$"$want_asdf" != xno])
+
+###
+### HDF5
+###
+
+AC_ARG_WITH([hdf5],
+    [AS_HELP_STRING([--with-hdf5],
+        [build HDF5 enabled version @<:@default=no@:>@])],
+    [want_hdf5="$withval"],
+    [want_hdf5=no])
+AM_CONDITIONAL([COND_HDF5], [test x$"$want_hdf5" != xno])
 
 ############################################################
 
@@ -331,14 +351,25 @@ if test "x${scotch_usable}" = "xyes"; then
 else
  AC_DEFINE([HAVE_SCOTCH],[1],[defined if Scotch is installed])
  AC_MSG_RESULT([no, using bundled scotch instead])
- AC_PROG_LEX
+
+ dnl autoconf 2.69 AC_PROG_LEX has no parameters
+ dnl autoconf 2.70 AC_PROG_LEX prints a deprecation warning without params
+ m4_if(m4_version_compare(m4_defn([AC_AUTOCONF_VERSION]), [2.70]), [-1], [dnl
+   dnl autoconf < 2.70
+   AC_PROG_LEX
+ ], [
+   dnl autoconf >= 2.70
+   AC_PROG_LEX([noyywrap])
+ ])
  if test -z "$LEX" || test "X$LEX" = "Xno"; then
    AC_MSG_ERROR([No suitable lex found])
  fi
+
  AC_PROG_YACC
  if test -z "$YACC" || test "X$YACC" = "Xno"; then
    AC_MSG_ERROR([No suitable yacc or bison found])
  fi
+
  ACX_PTHREAD(AC_MSG_RESULT([pthread found]), AC_MSG_ERROR([pthread not found]))
 
  # scotch only needed with mpi support
@@ -487,7 +518,7 @@ AS_IF([test x"$want_asdf" != xno], [
 #mpbl: adding flags to config.h.in through autoheader in order to save them into the adios file.
 #configure_flags_str="FC=$FC FCFLAGS=$FCFLAGS $FLAGS_CHECK"
 #AC_DEFINE_UNQUOTED([CONFIGURE_FLAGS],["${configure_flags_str}"],
- #         [configuration flags to be saved in the adios output file.])
+#         [configuration flags to be saved in the adios output file.])
 CONFIGURE_FLAGS="FC=$FC FCFLAGS=$FCFLAGS"
 AC_SUBST([CONFIGURE_FLAGS])
 
@@ -548,14 +579,14 @@ AS_IF([test x"$want_hip" != xno], [
       GPU_PLATFORM=`$HIPCONFIG_PROG --platform`
       AS_IF([test x"$GPU_PLATFORM" = xnvidia], [
           AC_MSG_NOTICE([HIP PLATFORM NVIDIA detected.])
-          HIP_PLATFORM=nvcc
-          FLAG_PLATFORM="${FC_DEFINE}__HIP_PLATFORM_NVCC__"
+          HIP_PLATFORM=nvidia
+          FLAG_PLATFORM="${FC_DEFINE}__HIP_PLATFORM_NVIDIA__"
       ])
 
       AS_IF([test x"$GPU_PLATFORM" = xamd], [
           AC_MSG_NOTICE([HIP PLATFORM AMD detected.])
-          HIP_PLATFORM=hcc
-          FLAG_PLATFORM="${FC_DEFINE}__HIP_PLATFORM_HCC__"
+          HIP_PLATFORM=amd
+          FLAG_PLATFORM="${FC_DEFINE}__HIP_PLATFORM_AMD__"
       ])
       # compiler might require a platform selection flag
       case "${HIP_FLAGS}" in
@@ -671,10 +702,10 @@ AM_CONDITIONAL([COND_HIP_PLATFORM_NVIDIA], [test x"$GPU_PLATFORM" = xnvidia])
 
 
 ###
-### OPENMP
+### OpenMP
 ###
 
-AS_IF([test x"$want_omp" != xno || test x"$want_with_omp" != xno], [
+AS_IF([test x"$want_omp" != xno], [
   AS_BOX([OpenMP])
   AC_MSG_NOTICE([OpenMP compilation is enabled])
 
@@ -708,22 +739,64 @@ AS_IF([test x"$want_vtk" != xno], [
     CIT_PATH_VTK
 ])
 
+###
+### HDF5
+###
+AS_IF([test x"$want_hdf5" != xno], [
+    AS_BOX([HDF5])
+    AC_MSG_NOTICE([HDF5 is enabled])
+
+    AC_ARG_VAR(HDF5_INC, [HDF5 include directory])
+    AC_ARG_VAR(HDF5_FCFLAGS, [Fortran compiler flags])
+    AC_ARG_VAR(HDF5_LIBS, [extra libraries for linking programs])
+
+    # HDF5 checking for Fortran
+    AC_LANG_PUSH(Fortran)
+    AC_MSG_CHECKING([for HDF5 modules])
+    FCFLAGS="$HDF5_FCFLAGS $FCFLAGS"
+    # adds include directory
+    if test "x$HDF5_INC" != "x"; then
+      HDF5_INCLUDES="-I$HDF5_INC"
+      FCFLAGS+=" $HDF5_INCLUDES"
+    fi
+    # compilation test
+    AC_COMPILE_IFELSE([
+      AC_LANG_PROGRAM([], [[
+      use hdf5
+      ]])
+    ], [
+      AC_MSG_RESULT(yes)
+    ], [
+      AC_MSG_RESULT(no)
+      AC_MSG_ERROR([HDF5 module not found; is HDF5 built with Fortran support for this compiler?])
+    ])
+    AC_LANG_POP([Fortran])
+    AC_SUBST([HDF5_INCLUDES])
+])
+
 ##
 ## Git version info
 ##
 AS_BOX([git version info])
 CIG_PKG_GIT(SPECFEM3D)
+
 AC_DEFINE_UNQUOTED([SPECFEM3D_VERSION], ["$PACKAGE_VERSION"], [Define SPECFEM3D version])
 #AC_DEFINE_UNQUOTED([SPECFEM3D_DOI], ["10.5281/zenodo.xxxxx"], [Define SPECFEM3D doi])
-AS_IF([test -d $srcdir/.git], [
-    GIT_VERSION_DEPS="$srcdir/.git/logs/HEAD"
-    AC_MSG_NOTICE([building from git repository])
-    AC_SUBST(GIT_VERSION_DEPS)
-], [
-    dnl Only substitute if not in a git repository.
-    AC_MSG_NOTICE([not a git repository])
-    AC_CONFIG_FILES([setup/version.fh])
+
+AS_IF([test x"$SPECFEM3D_RELEASE_VERSION" = x0],[
+  AC_MSG_NOTICE([building from git repository])
+  GIT_PACKAGE_VERSION=$SPECFEM3D_GIT_REVISION
+  GIT_COMMIT_VERSION=$SPECFEM3D_GIT_HASH
+  GIT_DATE_VERSION=$SPECFEM3D_GIT_DATE
+],[
+  AC_MSG_NOTICE([not a git repository])
+  GIT_PACKAGE_VERSION=$PACKAGE_VERSION
+  GIT_COMMIT_VERSION="unknown"
+  GIT_DATE_VERSION="unknown"
 ])
+AC_SUBST([GIT_PACKAGE_VERSION])
+AC_SUBST([GIT_COMMIT_VERSION])
+AC_SUBST([GIT_DATE_VERSION])
 
 ############################################################
 
@@ -736,6 +809,7 @@ AC_CONFIG_FILES([
     setup/constants_tomography.h
     setup/precision.h
     setup/config.fh
+    setup/version.fh
 ])
 
 # Scotch makefile
@@ -765,6 +839,7 @@ AH_BOTTOM([
 /* map fails when output files are > 4GB, which is often the case for GPU simulations */
 #undef USE_MAP_FUNCTION
 ])
+
 
 dnl FYI, this is not a "result", but AS_ECHO is not available in 2.61, and it
 dnl basically works like a portable echo.

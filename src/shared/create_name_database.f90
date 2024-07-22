@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -35,13 +35,13 @@
 
   integer iproc
 
-! name of the database file
+  ! name of the database file
   character(len=MAX_STRING_LEN) :: prname,procname,LOCAL_PATH
 
-! create the name for the database of the current slide and region
+  ! create the name for the database of the current slide and region
   write(procname,"('/proc',i6.6,'_')") iproc
 
-! create full name with path
+  ! create full name with path
   prname = LOCAL_PATH(1:len_trim(LOCAL_PATH)) // procname
 
   end subroutine create_name_database

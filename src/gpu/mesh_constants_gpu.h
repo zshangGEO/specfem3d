@@ -1,14 +1,14 @@
 /*
  !=====================================================================
  !
- !               S p e c f e m 3 D  V e r s i o n  3 . 0
- !               ---------------------------------------
+ !                         S p e c f e m 3 D
+ !                         -----------------
  !
  !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
- !                        Princeton University, USA
- !                and CNRS / University of Marseille, France
+ !                              CNRS, France
+ !                       and Princeton University, USA
  !                 (there are currently many more authors!)
- ! (c) Princeton University and CNRS / University of Marseille, July 2012
+ !                           (c) October 2017
  !
  ! This program is free software; you can redistribute it and/or modify
  ! it under the terms of the GNU General Public License as published by
@@ -112,8 +112,7 @@ typedef double realw;
 #endif
 
 // performance timers
-#define CUDA_TIMING 0
-#define CUDA_TIMING_UPDATE 0
+#define GPU_TIMING 0
 
 // error checking after cuda function calls
 // (note: this synchronizes many calls, thus e.g. no asynchronuous memcpy possible)
@@ -267,11 +266,16 @@ typedef double realw;
 typedef float realw;
 
 // textures
+// note: texture templates are supported only for CUDA versions <= 11.x
+//       since CUDA 12.x, these are deprecated and texture objects should be used instead
+//       see: https://developer.nvidia.com/blog/cuda-pro-tip-kepler-texture-objects-improve-performance-and-flexibility/
+#if defined(USE_TEXTURES_FIELDS) || defined(USE_TEXTURES_CONSTANTS)
 #ifdef USE_CUDA
 typedef texture<float, cudaTextureType1D, cudaReadModeElementType> realw_texture;
 #endif
 #ifdef USE_HIP
 typedef texture<float, hipTextureType1D, hipReadModeElementType> realw_texture;
+#endif
 #endif
 
 // pointer declarations
@@ -291,7 +295,7 @@ typedef realw* __restrict__ realw_p;
 
 // wrapper for global memory load function
 // usage:  val = get_global_cr( &A[index] );
-#if __CUDA_ARCH__ >= 350
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 350)
 // Device has ldg
 __device__ __forceinline__ realw get_global_cr(realw_const_p ptr) { return __ldg(ptr); }
 #else
@@ -417,13 +421,22 @@ typedef struct mesh_ {
   // mpi process
   int myrank;
 
-  // constants
+  // simulation flags
   int simulation_type;
   int save_forward;
-  int use_mesh_coloring_gpu;
-  int absorbing_conditions;
-  int gravity;
 
+  int stacey_absorbing_conditions;
+  int pml_conditions;
+
+  int gravity;
+  int approximate_ocean_load;
+  int attenuation;
+
+  int undo_attenuation;
+  int compute_and_store_strain;
+
+  int approximate_hess_kl;
+  int use_mesh_coloring_gpu;
 
   // ------------------------------------------------------------------ //
   // GLL points & weights
@@ -663,7 +676,41 @@ typedef struct mesh_ {
   realw* d_free_surface_normal;
   int* d_updated_dof_ocean_load;
 
-  // JC JC here we will need to add GPU support for the new C-PML routines
+  // C-PML
+  int NSPEC_CPML;
+  int* d_is_CPML;
+  int* d_spec_to_CPML;
+  int* d_CPML_to_spec;
+
+  realw* d_PML_displ_old; realw* d_PML_displ_new;
+
+  realw* d_rmemory_displ_elastic;
+  realw* d_rmemory_dux_dxl_x;
+  realw* d_rmemory_duy_dxl_y;
+  realw* d_rmemory_duz_dxl_z;
+  realw* d_rmemory_dux_dyl_x;
+  realw* d_rmemory_duy_dyl_y;
+  realw* d_rmemory_duz_dyl_z;
+  realw* d_rmemory_dux_dzl_x;
+  realw* d_rmemory_duy_dzl_y;
+  realw* d_rmemory_duz_dzl_z;
+  realw* d_rmemory_dux_dxl_y;
+  realw* d_rmemory_dux_dxl_z;
+  realw* d_rmemory_duy_dxl_x;
+  realw* d_rmemory_duz_dxl_x;
+  realw* d_rmemory_dux_dyl_y;
+  realw* d_rmemory_duy_dyl_x;
+  realw* d_rmemory_duy_dyl_z;
+  realw* d_rmemory_duz_dyl_y;
+  realw* d_rmemory_dux_dzl_z;
+  realw* d_rmemory_duy_dzl_z;
+  realw* d_rmemory_duz_dzl_x;
+  realw* d_rmemory_duz_dzl_y;
+
+  realw* d_pml_convolution_coef_alpha;
+  realw* d_pml_convolution_coef_beta;
+  realw* d_pml_convolution_coef_strain;
+  realw* d_pml_convolution_coef_abar;
 
   // ------------------------------------------------------------------ //
   // acoustic wavefield
@@ -729,8 +776,8 @@ typedef struct mesh_ {
 /* ----------------------------------------------------------------------------------------------- */
 
 // defined in helper_functions_gpu.c
-void gpuCopy_todevice_int(void** d_array_addr_ptr,int* h_array,int size);
-void gpuCopy_todevice_realw(void** d_array_addr_ptr,realw* h_array,int size);
+void gpuCreateCopy_todevice_int(void** d_array_addr_ptr,int* h_array,int size);
+void gpuCreateCopy_todevice_realw(void** d_array_addr_ptr,realw* h_array,int size);
 void gpuFree (void *d_ptr);
 
 void gpuReset();
@@ -755,6 +802,8 @@ void start_timing_gpu(gpu_event* start,gpu_event* stop);
 void stop_timing_gpu(gpu_event* start,gpu_event* stop, const char* info_str);
 void stop_timing_gpu(gpu_event* start,gpu_event* stop, const char* info_str,realw* t);
 
+// PML defined in pml_compute_accel_cuda.cu
+void (compute_forces_viscoelastic_pml_cuda)(long*,int*,int*,int*,int*,int*);
 
 /* ----------------------------------------------------------------------------------------------- */
 

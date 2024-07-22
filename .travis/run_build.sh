@@ -12,7 +12,7 @@ if [ "$RUN_CHECKS" == "0" ]; then
   echo "  no run checks required, exiting..."
   exit 0
 else
-  echo "  run checks required, start testing..."
+  echo "  run checks required, start building..."
 fi
 echo
 
@@ -26,6 +26,18 @@ echo
 echo "**********************************************************"
 echo
 
+echo "compiler versions:"
+echo "gcc --version"
+gcc --version
+echo "gfortran --version"
+gfortran --version
+echo "mpif90 --version"
+mpif90 --version
+if [ "$CUDA" == "true" ]; then
+  echo "nvcc --version"
+  nvcc --version
+fi
+echo ""
 
 ###########################################################
 # configuration & compilation
@@ -50,6 +62,12 @@ if [[ $? -ne 0 ]]; then echo "configuration failed:"; cat config.log; echo ""; e
 
 # we output to console
 sed -i "s:IMAIN .*:IMAIN = ISTANDARD_OUTPUT:" setup/constants.h
+
+# inversion example
+if [ "$TESTID" == "36" ]; then
+  sed -i "s:IMAIN .*:IMAIN = 42:" setup/constants.h
+  sed -i "s:INVERSE_LOG_FILE .*:INVERSE_LOG_FILE = 6:" src/inverse_problem_for_model/inverse_problem_par.f90
+fi
 
 # layered example w/ NGLL = 6
 if [ "$TESTID" == "28" ]; then

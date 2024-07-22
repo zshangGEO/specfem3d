@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -94,7 +94,7 @@ contains
     ref_point(3) = zmin
     write(27,*)
     WRITE(27,*) ' xmin, ymin, zmin ', xmin, ymin, zmin
-    write(27,*) ' sizes, nspec, nnodes ',  nspec, nnodes
+    write(27,*) ' nspec, nnodes ',  nspec, nnodes
     allocate(elmnts_center(3,nE),stat=ier)
     if (ier /= 0) call exit_MPI_without_rank('error allocating array 68')
     write(27,*)
@@ -109,10 +109,10 @@ contains
     if (ier /= 0) call exit_MPI_without_rank('error allocating array 70')
     allocate(load_elmnts_1(nE_1), elmnts_center_1(3,nE_1), old_num_1(nE_1),stat=ier)
     if (ier /= 0) call exit_MPI_without_rank('error allocating array 71')
-    elmnts_center_1(:,:)=elmnts_center(:,:)
-    load_elmnts_1(:)=load_elmnts(:)
+    elmnts_center_1(:,:) = elmnts_center(:,:)
+    load_elmnts_1(:) = load_elmnts(:)
     do i = 1,nE
-      old_num_1(i)=i
+      old_num_1(i) = i
     enddo
 
     call compute_partition(ipart_1, nEipart_1, npart_1, sum_load_1, cri_load_1, &
@@ -133,10 +133,10 @@ contains
        if (ier /= 0) call exit_MPI_without_rank('error allocating array 74')
 
        call extract_partition(load_elmnts_2, elmnts_center_2, old_num_2, nE_2, &
-            ipart_1, load_elmnts_1, elmnts_center_1, old_num_1, kpart_2, nE_1)
+                              ipart_1, load_elmnts_1, elmnts_center_1, old_num_1, kpart_2, nE_1)
 
        call compute_partition(ipart_2, nEipart_2, npart_2, sum_load_2, cri_load_2, &
-            load_elmnts_2, elmnts_center_2, iperm_2, nE_2, ref_point, idir)
+                              load_elmnts_2, elmnts_center_2, iperm_2, nE_2, ref_point, idir)
 
        ! partition of all remained slice in direction 3
        do kpart_3 = 1, npart_2
@@ -151,10 +151,10 @@ contains
           if (ier /= 0) call exit_MPI_without_rank('error allocating array 77')
 
           call extract_partition(load_elmnts_3, elmnts_center_3, old_num_3, nE_3, &
-               ipart_2, load_elmnts_2, elmnts_center_2, old_num_2, kpart_3, nE_2)
+                                 ipart_2, load_elmnts_2, elmnts_center_2, old_num_2, kpart_3, nE_2)
 
           call compute_partition(ipart_3, nEipart_3, npart_3, sum_load_3, cri_load_3, &
-               load_elmnts_3, elmnts_center_3, iperm_3, nE_3, ref_point, idir)
+                                 load_elmnts_3, elmnts_center_3, iperm_3, nE_3, ref_point, idir)
 
           do iE=1, nE_3
              p1 = kpart_2
@@ -182,6 +182,73 @@ contains
     deallocate(iperm_1, old_num_1)
 
   end subroutine partition_mesh
+
+
+  !--------------------------------------------
+  ! Geometry mesh decomposition
+  !---------------------------------------------
+
+  !
+  !  decomposition is made only using a distance criterion from
+  !  a given face of a computational box domain
+  !
+
+  subroutine partition_mesh_distance(elmnts, nodes_coords, nspec, nnodes, npart_1, npart_2, npart_3)
+
+    implicit none
+
+    ! input mesh
+    integer,                                     intent(in) :: nspec, nnodes
+    double precision,    dimension(NDIM,nnodes),    intent(in) :: nodes_coords
+    integer,             dimension(NGNOD,nspec), intent(in) :: elmnts
+
+    ! partition
+    integer,                                     intent(in) :: npart_1, npart_2, npart_3
+
+    ! local
+    double precision                                        :: xmin, xmax, ymin,ymax, zmin, zmax
+    double precision                                        :: x_bin, y_bin, z_bin
+    double precision,    dimension(3)                       :: ref_point
+    double precision,    dimension(:,:), allocatable        :: elmnts_center
+    integer    :: p1, p2, p3, iE, ier
+
+    nE = nspec
+    allocate(ipart(nE),stat=ier)
+    if (ier /= 0) call exit_MPI_without_rank('error allocating array 67')
+    ipart(:) = -1
+
+    xmin = minval(nodes_coords(1,:))
+    xmax = maxval(nodes_coords(1,:))
+    ymin = minval(nodes_coords(2,:))
+    ymax = maxval(nodes_coords(2,:))
+    zmin = minval(nodes_coords(3,:))
+    zmax = maxval(nodes_coords(3,:))
+
+    ref_point(1) = xmin
+    ref_point(2) = ymin
+    ref_point(3) = zmin
+    write(27,*)
+    WRITE(27,*) ' xmin, ymin, zmin ', xmin, ymin, zmin
+    write(27,*) ' nspec, nnodes ',  nspec, nnodes
+    allocate(elmnts_center(3,nE),stat=ier)
+    if (ier /= 0) call exit_MPI_without_rank('error allocating array 68')
+    write(27,*)
+    call compute_elmnts_center(elmnts_center, elmnts, nodes_coords, nspec, nnodes)
+
+
+    x_bin = (xmax - xmin)/npart_1
+    y_bin = (ymax - ymin)/npart_2
+    z_bin = (zmax - zmin)/npart_3
+    do iE=1, nE
+       p1 = floor((elmnts_center(1,iE)-xmin)/x_bin) + 1
+       p2 = floor((elmnts_center(2,iE)-ymin)/y_bin) + 1
+       p3 = floor((elmnts_center(3,iE)-zmin)/z_bin) + 1
+       ipart(iE) = p1 + npart_1*(p2-1) + npart_1*npart_2*(p3-1)
+    enddo
+
+    deallocate(elmnts_center)
+
+end subroutine partition_mesh_distance
 
   !---------
   ! compute partition in one direction
@@ -218,7 +285,7 @@ contains
     if (nE_tmp <= 0) stop 'Error: cannot use an array that has been declared with a size of zero'
     load_by_part = floor(sum_load_tmp(nE_tmp) / real(npart_tmp,8)) + 1
 
-    write(27,*) ' Load value by partition  ', Load_by_part
+    write(27,*) ' Load value by partition  ', Load_by_part, sum_load_tmp(nE_tmp), real(npart_tmp,8)
 
     do i = 1,nE_tmp
        k = iperm_tmp(i)
@@ -337,6 +404,7 @@ contains
        elmnts_center(2,iE) = elmnts_center(2,iE) / real(NGNOD,8)
        elmnts_center(3,iE) = elmnts_center(3,iE) / real(NGNOD,8)
     enddo
+
 
   end subroutine compute_elmnts_center
 

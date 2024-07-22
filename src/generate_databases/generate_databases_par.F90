@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -40,7 +40,6 @@
     IMODEL_1D_PREM,IMODEL_1D_PREM_PB,IMODEL_1D_CASCADIA,IMODEL_1D_SOCAL, &
     IDOMAIN_ACOUSTIC,IDOMAIN_ELASTIC,IDOMAIN_POROELASTIC, &
     NX_TOPO_FILE,NY_TOPO_FILE, &
-    ADIOS_TRANSPORT_METHOD, &
     ATTENUATION_COMP_MAXIMUM, &
     INJECTION_TECHNIQUE_IS_FK, &
     CPML_X_ONLY,CPML_Y_ONLY,CPML_Z_ONLY, &
@@ -158,6 +157,11 @@
   ! mesh surface
   logical,dimension(:),allocatable :: ispec_is_surface_external_mesh,iglob_is_surface_external_mesh
   integer :: nfaces_surface,nfaces_surface_glob_ext_mesh
+
+  ! adjacency arrays
+  integer,dimension(:),allocatable :: neighbors_xadj   ! adjacency indexing
+  integer,dimension(:),allocatable :: neighbors_adjncy ! adjacency
+  integer :: num_neighbors_all
 
   end module generate_databases_par
 

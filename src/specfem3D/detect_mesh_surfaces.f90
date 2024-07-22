@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -36,6 +36,9 @@
   implicit none
 
   integer :: ier
+
+  ! checks if anything to do
+  if (.not. IO_compute_task) return
 
   ! flag for any movie simulation
   if (MOVIE_SURFACE .or. CREATE_SHAKEMAP .or. MOVIE_VOLUME .or. PNM_IMAGE) then
@@ -79,7 +82,7 @@
   endif
 
   ! takes number of faces for top, free surface only
-  if (MOVIE_TYPE == 1 .or. (NOISE_TOMOGRAPHY /= 0)) then
+  if (MOVIE_TYPE == 1 .or. MOVIE_TYPE == 3 .or. (NOISE_TOMOGRAPHY /= 0)) then
     nfaces_surface = num_free_surface_faces
   endif
 
@@ -93,22 +96,27 @@
     ! user output
     if (myrank == 0) then
       write(IMAIN,*) 'volume movies:'
+      if (SAVE_DISPLACEMENT) then
+        write(IMAIN,*) '  saving: particle displacements'
+      else
+        write(IMAIN,*) '  saving: particle velocities'
+      endif
       write(IMAIN,*) '  number of steps between frames = ',NTSTEP_BETWEEN_FRAMES
       write(IMAIN,*)
       call flush_IMAIN()
     endif
 
     ! temporary fields for output
-    allocate(velocity_x(NGLLX,NGLLY,NGLLZ,NSPEC_AB),stat=ier)
+    allocate(wavefield_x(NGLLX,NGLLY,NGLLZ,NSPEC_AB),stat=ier)
     if (ier /= 0) call exit_MPI_without_rank('error allocating array 1731')
-    allocate(velocity_y(NGLLX,NGLLY,NGLLZ,NSPEC_AB),stat=ier)
+    allocate(wavefield_y(NGLLX,NGLLY,NGLLZ,NSPEC_AB),stat=ier)
     if (ier /= 0) call exit_MPI_without_rank('error allocating array 1732')
-    allocate(velocity_z(NGLLX,NGLLY,NGLLZ,NSPEC_AB),stat=ier)
+    allocate(wavefield_z(NGLLX,NGLLY,NGLLZ,NSPEC_AB),stat=ier)
     if (ier /= 0) call exit_MPI_without_rank('error allocating array 1733')
-    if (ier /= 0) stop 'error allocating array movie velocity_x etc.'
-    velocity_x(:,:,:,:) = 0._CUSTOM_REAL
-    velocity_y(:,:,:,:) = 0._CUSTOM_REAL
-    velocity_z(:,:,:,:) = 0._CUSTOM_REAL
+    if (ier /= 0) stop 'error allocating array movie wavefield_x etc.'
+    wavefield_x(:,:,:,:) = 0._CUSTOM_REAL
+    wavefield_y(:,:,:,:) = 0._CUSTOM_REAL
+    wavefield_z(:,:,:,:) = 0._CUSTOM_REAL
 
     ! elastic/poroelastic only
     if (ELASTIC_SIMULATION .or. POROELASTIC_SIMULATION) then
@@ -125,6 +133,40 @@
       curl_x(:,:,:,:) = 0._CUSTOM_REAL
       curl_y(:,:,:,:) = 0._CUSTOM_REAL
       curl_z(:,:,:,:) = 0._CUSTOM_REAL
+
+      if (MOVIE_VOLUME_STRESS) then
+        allocate(stress_xx(NGLLX,NGLLY,NGLLZ,NSPEC_AB), &
+                 stress_yy(NGLLX,NGLLY,NGLLZ,NSPEC_AB), &
+                 stress_zz(NGLLX,NGLLY,NGLLZ,NSPEC_AB), &
+                 stress_xy(NGLLX,NGLLY,NGLLZ,NSPEC_AB), &
+                 stress_xz(NGLLX,NGLLY,NGLLZ,NSPEC_AB), &
+                 stress_yz(NGLLX,NGLLY,NGLLZ,NSPEC_AB),stat=ier)
+        if (ier /= 0) call exit_MPI_without_rank('error allocating array 1738')
+        if (ier /= 0) stop 'error allocating array stress'
+        stress_xx(:,:,:,:) = 0._CUSTOM_REAL
+        stress_yy(:,:,:,:) = 0._CUSTOM_REAL
+        stress_zz(:,:,:,:) = 0._CUSTOM_REAL
+        stress_xy(:,:,:,:) = 0._CUSTOM_REAL
+        stress_xz(:,:,:,:) = 0._CUSTOM_REAL
+        stress_yz(:,:,:,:) = 0._CUSTOM_REAL
+      endif
+
+      ! allocate array for global points
+      allocate(div_glob(NGLOB_AB),stat=ier)
+      if (ier /= 0) call exit_MPI_without_rank('error allocating array 2004')
+      div_glob(:) = 0._CUSTOM_REAL
+
+      allocate(valence_glob(NGLOB_AB), stat=ier)
+      if (ier /= 0) call exit_MPI_without_rank('error allocating array 2005')
+      if (ier /= 0) stop 'error allocating arrays for movie div and curl'
+      valence_glob(:) = 0
+    endif
+
+    ! acoustic only
+    if (.not. ELASTIC_SIMULATION .and. .not. POROELASTIC_SIMULATION) then
+      allocate(wavefield_pressure(NGLLX,NGLLY,NGLLZ,NSPEC_AB),stat=ier)
+      if (ier /= 0) call exit_MPI_without_rank('error allocating array 1731')
+      wavefield_pressure(:,:,:,:) = 0._CUSTOM_REAL
     endif
   endif
 

@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -28,15 +28,18 @@
 !----
 !---- locate_receivers finds the correct position of the receivers
 !----
-  subroutine locate_receivers(rec_filename,nrec,islice_selected_rec,ispec_selected_rec, &
-                              xi_receiver,eta_receiver,gamma_receiver,station_name,network_name,nu_rec, &
-                              utm_x_source,utm_y_source)
+  subroutine locate_receivers(rec_filename,utm_x_source,utm_y_source)
 
   use constants
 
-  use specfem_par, only: USE_SOURCES_RECEIVERS_Z,ibool,myrank,NSPEC_AB,NGLOB_AB, &
-                         xstore,ystore,zstore,SUPPRESS_UTM_PROJECTION,INVERSE_FWI_FULL_PROBLEM, &
-                         SU_FORMAT
+  use specfem_par, only: USE_SOURCES_RECEIVERS_Z,SUPPRESS_UTM_PROJECTION,INVERSE_FWI_FULL_PROBLEM, &
+                         ibool,myrank,NSPEC_AB,NGLOB_AB, &
+                         xstore,ystore,zstore, &
+                         nrec,islice_selected_rec,ispec_selected_rec, &
+                         xi_receiver,eta_receiver,gamma_receiver,nu_rec, &
+                         station_name,network_name, &
+                         stlat,stlon,stbur, &
+                         x_target_station,y_target_station,z_target_station
   ! PML
   use pml_par, only: is_CPML
 
@@ -46,12 +49,6 @@
   character(len=*) :: rec_filename
 
   ! receivers
-  integer,intent(in) :: nrec
-  integer, dimension(nrec),intent(out) :: islice_selected_rec,ispec_selected_rec
-  double precision, dimension(nrec),intent(out) :: xi_receiver,eta_receiver,gamma_receiver
-  character(len=MAX_LENGTH_STATION_NAME), dimension(nrec),intent(out) :: station_name
-  character(len=MAX_LENGTH_NETWORK_NAME), dimension(nrec),intent(out) :: network_name
-  double precision, dimension(NDIM,NDIM,nrec),intent(out) :: nu_rec
   double precision,intent(in) :: utm_x_source,utm_y_source
 
   ! local parameters
@@ -70,7 +67,7 @@
 
   ! receiver information
   ! station information for writing the seismograms
-  double precision, allocatable, dimension(:) :: stlat,stlon,stele,stbur,stutm_x,stutm_y,elevation
+  double precision, allocatable, dimension(:) :: stutm_x,stutm_y,elevation
 
   ! domains
   integer, dimension(:),allocatable :: idomain
@@ -85,7 +82,6 @@
   double precision :: x,y,z,x_new,y_new,z_new
   double precision :: xi,eta,gamma,final_distance_squared
   double precision, dimension(NDIM,NDIM) :: nu_found
-  double precision, dimension(NDIM) :: nu_tmp ! to avoid intel compiler warning about temporary array in i/o routine
 
   integer :: ispec_found,idomain_found
 
@@ -96,6 +92,7 @@
   double precision, dimension(NDIM,NDIM,NREC_SUBSET_MAX) :: nu_subset
   integer, dimension(NREC_SUBSET_MAX) :: ispec_selected_rec_subset,idomain_subset
   integer :: nrec_subset_current_size,irec_in_this_subset,irec_already_done
+  integer :: num_output_info
 
   logical :: is_done_stations
 
@@ -116,8 +113,13 @@
     if (USE_SOURCES_RECEIVERS_Z) then
       write(IMAIN,*) 'using sources/receivers Z:'
       write(IMAIN,*) '  (depth) becomes directly (z) coordinate'
+      write(IMAIN,*)
     endif
     call flush_IMAIN()
+
+    ! output frequency for large number of receivers
+    ! number to output about ~50 steps, rounds to the next multiple of 500
+    num_output_info = max(500,int(ceiling(ceiling(nrec/50.0)/500.0)*500))
   endif
 
   ! compute typical size of elements
@@ -127,49 +129,27 @@
                             elemsize_min_glob,elemsize_max_glob, &
                             distance_min_glob,distance_max_glob)
 
-  ! allocate memory for arrays using number of stations
-  allocate(stlat(nrec),stat=ier)
-  if (ier /= 0) call exit_MPI_without_rank('error allocating array 1955')
-  allocate(stlon(nrec),stat=ier)
-  if (ier /= 0) call exit_MPI_without_rank('error allocating array 1956')
-  allocate(stele(nrec),stat=ier)
-  if (ier /= 0) call exit_MPI_without_rank('error allocating array 1957')
-  allocate(stbur(nrec),stat=ier)
-  if (ier /= 0) call exit_MPI_without_rank('error allocating array 1958')
-  stlat(:) = 0.d0
-  stlon(:) = 0.d0
-  stele(:) = 0.d0
-  stbur(:) = 0.d0
-
   ! reads STATIONS file
-  call read_stations(rec_filename,nrec,station_name,network_name,stlat,stlon,stele,stbur)
+  call read_stations(rec_filename)
 
   ! checks if station locations already available
-  if (SU_FORMAT .and. (.not. INVERSE_FWI_FULL_PROBLEM) ) then
-    call read_stations_SU_from_previous_run(nrec,station_name,network_name, &
-                                            islice_selected_rec,ispec_selected_rec, &
-                                            xi_receiver,eta_receiver,gamma_receiver, &
-                                            nu_rec,is_done_stations)
+  if (.not. INVERSE_FWI_FULL_PROBLEM) then
+    ! reads stations_info.bin if available in OUTPUT_FILES/ folder
+    call read_stations_from_previous_run(is_done_stations)
+
     ! check if done
     if (is_done_stations) then
-      ! free temporary arrays
-      deallocate(stlat)
-      deallocate(stlon)
-      deallocate(stele)
-      deallocate(stbur)
-
       ! user output
       if (myrank == 0) then
         ! elapsed time since beginning of mesh generation
         tCPU = wtime() - tstart
         write(IMAIN,*)
-        write(IMAIN,*) 'Elapsed time for receiver detection in seconds = ',tCPU
+        write(IMAIN,*) 'Elapsed time for receiver detection in seconds = ',sngl(tCPU)
         write(IMAIN,*)
         write(IMAIN,*) 'End of receiver detection - done'
         write(IMAIN,*)
         call flush_IMAIN()
       endif
-
       ! all done
       return
     endif
@@ -263,8 +243,9 @@
 
       ! user output progress
       if (myrank == 0 .and. nrec > 1000) then
-        if (mod(irec,500) == 0) then
-          write(IMAIN,*) '  located receivers ',irec,'out of',nrec
+        if (mod(irec,num_output_info) == 0) then
+          tCPU = wtime() - tstart
+          write(IMAIN,*) '  located receivers ',irec,'out of',nrec,' - elapsed time: ',sngl(tCPU),'s'
           call flush_IMAIN()
         endif
       endif
@@ -339,7 +320,7 @@
       endif
 
       ! limits user output if too many receivers
-      if (nrec < 1000 .and. (.not. SU_FORMAT )) then
+      if (nrec < 1000) then
 
         ! receiver info
         write(IMAIN,*)
@@ -385,12 +366,9 @@
         write(IMAIN,*) '     gamma = ',gamma_receiver(irec)
 
         write(IMAIN,*) '     rotation matrix: '
-        nu_tmp(:) = nu_rec(1,:,irec)
-        write(IMAIN,*) '     nu1 = ',sngl(nu_tmp)
-        nu_tmp(:) = nu_rec(2,:,irec)
-        write(IMAIN,*) '     nu2 = ',sngl(nu_tmp)
-        nu_tmp(:) = nu_rec(3,:,irec)
-        write(IMAIN,*) '     nu3 = ',sngl(nu_tmp)
+        write(IMAIN,*) '     nu1 = ',sngl(nu_rec(1,1,irec)),sngl(nu_rec(1,2,irec)),sngl(nu_rec(1,3,irec))
+        write(IMAIN,*) '     nu2 = ',sngl(nu_rec(2,1,irec)),sngl(nu_rec(2,2,irec)),sngl(nu_rec(2,3,irec))
+        write(IMAIN,*) '     nu3 = ',sngl(nu_rec(3,1,irec)),sngl(nu_rec(3,2,irec)),sngl(nu_rec(3,3,irec))
 
         if (SUPPRESS_UTM_PROJECTION) then
           write(IMAIN,*) '     x: ',x_found(irec)
@@ -429,17 +407,19 @@
     final_distance_max = maxval(final_distance(:))
 
     ! display maximum error for all the receivers
+    write(IMAIN,*)
     write(IMAIN,*) 'maximum error in location of all the receivers: ',sngl(final_distance_max),' m'
+    write(IMAIN,*)
 
     ! add warning if estimate is poor
     ! (usually means receiver outside the mesh given by the user)
     if (final_distance_max > elemsize_max_glob) then
-      write(IMAIN,*)
       write(IMAIN,*) '************************************************************'
       write(IMAIN,*) '************************************************************'
       write(IMAIN,*) '***** WARNING: at least one receiver is poorly located *****'
       write(IMAIN,*) '************************************************************'
       write(IMAIN,*) '************************************************************'
+      write(IMAIN,*)
     endif
 
     ! write the locations of stations, so that we can load them and write them to SU headers later
@@ -448,32 +428,37 @@
     if (ier /= 0) &
       call exit_mpi(myrank,'error opening file '//trim(OUTPUT_FILES)//'/output_list_stations.txt')
     ! writes station infos
-    do irec=1,nrec
+    do irec = 1,nrec
       write(IOUT_SU,'(a32,a8,3f24.12)') station_name(irec),network_name(irec),x_found(irec),y_found(irec),z_found(irec)
     enddo
     ! closes output file
     close(IOUT_SU)
 
     ! stores station infos for later runs
-    if (SU_FORMAT) call write_stations_SU_for_next_run(nrec,islice_selected_rec,ispec_selected_rec, &
-                                                       xi_receiver,eta_receiver,gamma_receiver, &
-                                                       x_found,y_found,z_found,nu_rec)
+    call write_stations_for_next_run(x_found,y_found,z_found)
 
     ! elapsed time since beginning of mesh generation
     tCPU = wtime() - tstart
-    write(IMAIN,*)
-    write(IMAIN,*) 'Elapsed time for receiver detection in seconds = ',tCPU
+    write(IMAIN,*) 'Elapsed time for receiver detection in seconds = ',sngl(tCPU)
     write(IMAIN,*)
     write(IMAIN,*) 'End of receiver detection - done'
     write(IMAIN,*)
     call flush_IMAIN()
   endif    ! end of section executed by main process only
 
-  ! deallocate arrays
-  deallocate(stlat)
-  deallocate(stlon)
-  deallocate(stele)
-  deallocate(stbur)
+  ! inverse problem might need station locations for damping
+  if (INVERSE_FWI_FULL_PROBLEM) then
+    ! (re-)allocate location arrays
+    if (allocated(x_target_station)) deallocate(x_target_station,y_target_station,z_target_station)
+    allocate(x_target_station(nrec),y_target_station(nrec),z_target_station(nrec),stat=ier)
+    if (ier /= 0) call exit_MPI_without_rank('error allocating x/y/z_target_station arrays')
+    ! store target locations
+    x_target_station(:) = x_target(:)
+    y_target_station(:) = y_target(:)
+    z_target_station(:) = z_target(:)
+  endif
+
+  ! deallocate temporary arrays
   deallocate(stutm_x)
   deallocate(stutm_y)
   deallocate(elevation)

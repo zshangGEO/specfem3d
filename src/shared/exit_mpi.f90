@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -123,6 +123,8 @@
 
 ! flushes possible left-overs from print-statements
 
+  use iso_Fortran_env, only: stdout => output_unit
+
   implicit none
 
   logical :: is_connected
@@ -135,12 +137,21 @@
 
   ! checks default stdout unit 6
   inquire(unit=6,opened=is_connected)
-  if (is_connected) &
+  if (is_connected) then
     flush(6)
+    return
+  endif
 
   ! checks Cray stdout unit 101
   inquire(unit=101,opened=is_connected)
-  if (is_connected) &
+  if (is_connected) then
     flush(101)
+    return
+  endif
+
+  ! fallback, try stdout
+  if (.not. is_connected) then
+    flush(stdout)
+  endif
 
   end subroutine flush_stdout

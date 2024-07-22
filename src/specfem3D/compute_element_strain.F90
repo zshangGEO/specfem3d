@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -54,12 +54,25 @@
   real(kind=CUSTOM_REAL) :: tempx1l,tempx2l,tempx3l
   real(kind=CUSTOM_REAL) :: tempy1l,tempy2l,tempy3l
   real(kind=CUSTOM_REAL) :: tempz1l,tempz2l,tempz3l
+  real(kind=CUSTOM_REAL) :: templ
 
   real(kind=CUSTOM_REAL) :: hp1,hp2,hp3
   real(kind=CUSTOM_REAL) :: xixl,xiyl,xizl,etaxl,etayl,etazl,gammaxl,gammayl,gammazl
   real(kind=CUSTOM_REAL) :: duxdxl,duxdyl,duxdzl,duydxl,duydyl,duydzl,duzdxl,duzdyl,duzdzl
   real(kind=CUSTOM_REAL) :: duxdxl_plus_duydyl,duxdxl_plus_duzdzl,duydyl_plus_duzdzl
   real(kind=CUSTOM_REAL) :: duxdyl_plus_duydxl,duzdxl_plus_duxdzl,duzdyl_plus_duydzl
+
+  real(kind=CUSTOM_REAL),dimension(NDIM,NGLLX,NGLLY,NGLLZ) :: displ_elem
+
+  ! stores elements displacement field
+  do k = 1,NGLLZ
+    do j = 1,NGLLY
+      do i = 1,NGLLX
+        iglob = ibool(i,j,k,ispec)
+        displ_elem(:,i,j,k) = displ(:,iglob)
+      enddo
+    enddo
+  enddo
 
   ispec_irreg = irregular_element_number(ispec)
 
@@ -79,28 +92,21 @@
         tempz2l = 0._CUSTOM_REAL
         tempz3l = 0._CUSTOM_REAL
 
-        do l = 1,NGLLX
+        do l = 1,NGLLX    ! assumes NGLLX == NGLLY == NGLLZ
           hp1 = hprime_xx(i,l)
-          iglob = ibool(l,j,k,ispec)
-          tempx1l = tempx1l + displ(1,iglob)*hp1
-          tempy1l = tempy1l + displ(2,iglob)*hp1
-          tempz1l = tempz1l + displ(3,iglob)*hp1
-!!! can merge these loops because NGLLX = NGLLY = NGLLZ          enddo
+          tempx1l = tempx1l + displ_elem(1,l,j,k)*hp1
+          tempy1l = tempy1l + displ_elem(2,l,j,k)*hp1
+          tempz1l = tempz1l + displ_elem(3,l,j,k)*hp1
 
-!!! can merge these loops because NGLLX = NGLLY = NGLLZ          do l = 1,NGLLY
           hp2 = hprime_yy(j,l)
-          iglob = ibool(i,l,k,ispec)
-          tempx2l = tempx2l + displ(1,iglob)*hp2
-          tempy2l = tempy2l + displ(2,iglob)*hp2
-          tempz2l = tempz2l + displ(3,iglob)*hp2
-!!! can merge these loops because NGLLX = NGLLY = NGLLZ          enddo
+          tempx2l = tempx2l + displ_elem(1,i,l,k)*hp2
+          tempy2l = tempy2l + displ_elem(2,i,l,k)*hp2
+          tempz2l = tempz2l + displ_elem(3,i,l,k)*hp2
 
-!!! can merge these loops because NGLLX = NGLLY = NGLLZ          do l = 1,NGLLZ
           hp3 = hprime_zz(k,l)
-          iglob = ibool(i,j,l,ispec)
-          tempx3l = tempx3l + displ(1,iglob)*hp3
-          tempy3l = tempy3l + displ(2,iglob)*hp3
-          tempz3l = tempz3l + displ(3,iglob)*hp3
+          tempx3l = tempx3l + displ_elem(1,i,j,l)*hp3
+          tempy3l = tempy3l + displ_elem(2,i,j,l)*hp3
+          tempz3l = tempz3l + displ_elem(3,i,j,l)*hp3
         enddo
 
         ! get derivatives of ux, uy and uz with respect to x, y and z
@@ -151,9 +157,10 @@
         duzdyl_plus_duydzl = duzdyl + duydzl
 
         ! compute deviatoric strain
-        eps_trace_over_3_loc(i,j,k) = ONE_THIRD * (duxdxl + duydyl + duzdzl)
-        epsilondev_loc(1,i,j,k) = duxdxl - eps_trace_over_3_loc(i,j,k)
-        epsilondev_loc(2,i,j,k) = duydyl - eps_trace_over_3_loc(i,j,k)
+        templ = ONE_THIRD * (duxdxl + duydyl + duzdzl)
+        eps_trace_over_3_loc(i,j,k) = templ
+        epsilondev_loc(1,i,j,k) = duxdxl - templ
+        epsilondev_loc(2,i,j,k) = duydyl - templ
         epsilondev_loc(3,i,j,k) = 0.5_CUSTOM_REAL * duxdyl_plus_duydxl
         epsilondev_loc(4,i,j,k) = 0.5_CUSTOM_REAL * duzdxl_plus_duxdzl
         epsilondev_loc(5,i,j,k) = 0.5_CUSTOM_REAL * duzdyl_plus_duydzl
@@ -162,3 +169,89 @@
   enddo ! NGLLZ
 
   end subroutine compute_element_strain
+
+!-------------------------------------------------------------------------------------------------
+!
+! compute the strain in elastic domains
+!
+!-------------------------------------------------------------------------------------------------
+
+  subroutine compute_strain_att()
+
+  use specfem_par
+  use specfem_par_elastic
+
+  implicit none
+
+  ! local parameters
+  real(kind=CUSTOM_REAL), dimension(5,NGLLX,NGLLY,NGLLZ) :: epsilondev_loc
+  real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLY,NGLLZ) :: epsilon_trace_over_3_loc
+  integer :: ispec
+
+  ! computes strain based on forward wavefield displ
+  if (.not. GPU_MODE) then
+    do ispec = 1, NSPEC_AB
+      ! elastic elements
+      if (ispec_is_elastic(ispec)) then
+        ! strain for ispec element
+        call compute_element_strain(ispec,NGLOB_AB,displ,epsilondev_loc,epsilon_trace_over_3_loc)
+
+        ! backward/reconstructed strain arrays
+        epsilon_trace_over_3(:,:,:,ispec) = epsilon_trace_over_3_loc(:,:,:)                ! needed for kernels
+        epsilondev_trace(:,:,:,ispec) = 3.0_CUSTOM_REAL * epsilon_trace_over_3_loc(:,:,:)  ! needed for bulk attenuation
+        epsilondev_xx(:,:,:,ispec) = epsilondev_loc(1,:,:,:)                               ! needed for shear attenuation
+        epsilondev_yy(:,:,:,ispec) = epsilondev_loc(2,:,:,:)
+        epsilondev_xy(:,:,:,ispec) = epsilondev_loc(3,:,:,:)
+        epsilondev_xz(:,:,:,ispec) = epsilondev_loc(4,:,:,:)
+        epsilondev_yz(:,:,:,ispec) = epsilondev_loc(5,:,:,:)
+      endif
+    enddo
+  else
+    ! calculates strains on GPU
+    call compute_strain_cuda(Mesh_pointer,1)
+  endif
+
+  end subroutine compute_strain_att
+
+!
+!-------------------------------------------------------------------------------------------------
+!
+
+  subroutine compute_strain_att_backward()
+
+  use specfem_par
+  use specfem_par_elastic
+
+  implicit none
+
+  ! local parameters
+  real(kind=CUSTOM_REAL), dimension(5,NGLLX,NGLLY,NGLLZ) :: b_epsilondev_loc
+  real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLY,NGLLZ) :: b_epsilon_trace_over_3_loc
+  integer :: ispec
+
+  ! computes strain based on backward/reconstructed wavefield b_displ
+  if (.not. GPU_MODE) then
+    do ispec = 1, NSPEC_AB
+      if (ispec_is_elastic(ispec)) then
+        ! backward/reconstructed wavefield strain will be re-computed locally here
+        call compute_element_strain(ispec,NGLOB_AB,b_displ,b_epsilondev_loc,b_epsilon_trace_over_3_loc)
+
+        ! backward/reconstructed strain arrays
+        b_epsilon_trace_over_3(:,:,:,ispec) = b_epsilon_trace_over_3_loc(:,:,:)                ! needed for kernels
+        b_epsilondev_trace(:,:,:,ispec) = 3.0_CUSTOM_REAL * b_epsilon_trace_over_3_loc(:,:,:)  ! needed for bulk attenuation
+        b_epsilondev_xx(:,:,:,ispec) = b_epsilondev_loc(1,:,:,:)                               ! needed for shear attenuation
+        b_epsilondev_yy(:,:,:,ispec) = b_epsilondev_loc(2,:,:,:)
+        b_epsilondev_xy(:,:,:,ispec) = b_epsilondev_loc(3,:,:,:)
+        b_epsilondev_xz(:,:,:,ispec) = b_epsilondev_loc(4,:,:,:)
+        b_epsilondev_yz(:,:,:,ispec) = b_epsilondev_loc(5,:,:,:)
+      endif
+    enddo
+  else
+    ! calculates strains on GPU
+    call compute_strain_cuda(Mesh_pointer,3)
+  endif
+
+  end subroutine compute_strain_att_backward
+
+
+

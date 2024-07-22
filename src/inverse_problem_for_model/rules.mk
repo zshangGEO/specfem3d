@@ -1,13 +1,13 @@
 #=====================================================================
 #
-#               S p e c f e m 3 D  V e r s i o n  3 . 0
-#               ---------------------------------------
+#                         S p e c f e m 3 D
+#                         -----------------
 #
 #     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-#                        Princeton University, USA
-#                and CNRS / University of Marseille, France
+#                              CNRS, France
+#                       and Princeton University, USA
 #                 (there are currently many more authors!)
-# (c) Princeton University and CNRS / University of Marseille, July 2012
+#                           (c) October 2017
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,10 +24,6 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
 #=====================================================================
-
-# I make this Makefile serial for now because I do not know how to write a clean rules.mk here with all the right dependencies
-# If someone knows how to do that then please do it (in this rules.mk file only; all the others in other directories are already OK)
-#.NOTPARALLEL:
 
 ## compilation directories
 S := ${S_TOP}/src/inverse_problem_for_model
@@ -160,12 +156,18 @@ inverse_problem_for_model_OBJECTS += \
 	$O/get_elevation.spec.o \
 	$O/get_force.spec.o \
 	$O/gravity_perturbation.spec.o \
+	$O/hdf5_io_server.spec_hdf5.o \
 	$O/initialize_simulation.spec.o \
 	$O/iterate_time.spec.o \
 	$O/locate_MPI_slice.spec.o \
 	$O/locate_point.spec.o \
 	$O/locate_receivers.spec.o \
 	$O/locate_source.spec.o \
+	$O/lts_assemble_MPI_vector.spec.o \
+	$O/lts_global_step.spec.o \
+	$O/lts_iterate_time.spec.o \
+	$O/lts_newmark_update.spec.o \
+	$O/lts_setup.spec.o \
 	$O/make_gravity.spec.o \
 	$O/noise_tomography.spec.o \
 	$O/pml_allocate_arrays.spec.o \
@@ -184,6 +186,7 @@ inverse_problem_for_model_OBJECTS += \
 	$O/read_external_stf.spec.o \
 	$O/read_forward_arrays.spec.o \
 	$O/read_mesh_databases.spec.o \
+	$O/read_mesh_databases_hdf5.spec_hdf5.o \
 	$O/read_stations.spec.o \
 	$O/save_adjoint_kernels.spec.o \
 	$O/save_forward_arrays.spec.o \
@@ -195,7 +198,9 @@ inverse_problem_for_model_OBJECTS += \
 	$O/update_displacement_scheme.spec.o \
 	$O/update_displacement_LDDRK.spec.o \
 	$O/write_movie_output.spec.o \
+	$O/write_movie_output_HDF5.spec_hdf5.o \
 	$O/write_output_ASCII_or_binary.spec.o \
+	$O/write_output_HDF5.spec_hdf5.o \
 	$O/write_output_SU.spec.o \
 	$O/write_seismograms.spec.o \
 	$(EMPTY_MACRO)
@@ -203,10 +208,13 @@ inverse_problem_for_model_OBJECTS += \
 
 inverse_problem_for_model_SHARED_OBJECTS = \
 	$O/shared_par.shared_module.o \
+	$O/adios_manager.shared_adios_module.o \
 	$O/assemble_MPI_scalar.shared.o \
 	$O/check_mesh_resolution.shared.o \
+	$O/count_number_of_sources.shared.o \
 	$O/create_name_database.shared.o \
 	$O/define_derivation_matrices.shared.o \
+	$O/define_mass_matrices.shared.o \
 	$O/detect_surface.shared.o \
 	$O/exit_mpi.shared.o \
 	$O/force_ftz.cc.o \
@@ -215,6 +223,7 @@ inverse_problem_for_model_SHARED_OBJECTS = \
 	$O/get_jacobian_boundaries.shared.o \
 	$O/get_shape3D.shared.o \
 	$O/gll_library.shared.o \
+	$O/hdf5_manager.shared_hdf5_module.o \
 	$O/heap_sort.shared.o \
 	$O/hex_nodes.shared.o \
 	$O/init_openmp.shared.o \
@@ -283,25 +292,16 @@ inverse_problem_for_model_SHARED_OBJECTS += $(gpu_OBJECTS)
 ### ADIOS
 ###
 
-# using ADIOS files
-
-adios_inverse_problem_for_model_OBJECTS= \
-	$O/read_mesh_databases_adios.spec_adios.o \
-	$O/save_forward_arrays_adios.spec_adios.o \
-	$O/read_forward_arrays_adios.spec_adios.o \
-	$O/save_kernels_adios.spec_adios.o
-
-adios_inverse_problem_for_model_PREOBJECTS = \
-	$O/adios_manager.shared_adios.o \
-	$O/adios_helpers_definitions.shared_adios_module.o \
-	$O/adios_helpers_writers.shared_adios_module.o \
-	$O/adios_helpers.shared_adios.o
-
-adios_inverse_problem_for_model_STUBS = \
-	$O/specfem3D_adios_stubs.spec_noadios.o
-
-adios_inverse_problem_for_model_PRESTUBS = \
-	$O/adios_manager_stubs.shared_noadios.o
+# conditional adios linking
+ifeq ($(ADIOS),yes)
+inverse_problem_for_model_OBJECTS += $(adios_specfem3D_OBJECTS)
+inverse_problem_for_model_SHARED_OBJECTS += $(adios_specfem3D_PREOBJECTS)
+else ifeq ($(ADIOS2),yes)
+inverse_problem_for_model_OBJECTS += $(adios_specfem3D_OBJECTS)
+inverse_problem_for_model_SHARED_OBJECTS += $(adios_specfem3D_PREOBJECTS)
+else
+inverse_problem_for_model_OBJECTS += $(adios_specfem3D_STUBS)
+endif
 
 
 # conditional asdf linking
@@ -314,16 +314,7 @@ inverse_problem_for_model_OBJECTS += $(asdf_specfem3D_STUBS)
 inverse_problem_for_model_SHARED_OBJECTS += $(asdf_specfem3D_SHARED_STUBS)
 endif
 
-
-# conditional adios linking
-ifeq ($(ADIOS),no)
-adios_inverse_problem_for_model_OBJECTS = $(adios_inverse_problem_for_model_STUBS)
-adios_inverse_problem_for_model_PREOBJECTS = $(adios_inverse_problem_for_model_PRESTUBS)
-endif
-inverse_problem_for_model_OBJECTS += $(adios_inverse_problem_for_model_OBJECTS)
-inverse_problem_for_model_SHARED_OBJECTS += $(adios_inverse_problem_for_model_PREOBJECTS)
-
-
+# vtk
 ifeq ($(VTK),yes)
 inverse_problem_for_model_OBJECTS += \
 	$O/vtk_window_stubs.visualcc.o \
@@ -370,7 +361,11 @@ $O/interpolation_mod.inv_input.o: $O/shared_par.shared_module.o
 $O/signal_processing_mod.inv_adjoint_source.o: $O/specfem3D_par.spec_module.o
 
 $O/mesh_tools_mod.inv_input.o: $O/inverse_problem_par.inv_par.o
-$O/IO_model_mod.inv_input.o: $O/mesh_tools_mod.inv_input.o
+$O/IO_model_mod.inv_input.o: \
+	$O/mesh_tools_mod.inv_input.o \
+	$O/shared_par.shared_module.o \
+	$O/specfem3D_par.spec_module.o \
+	$O/create_color_image.spec.o
 
 $O/rotations_mod.inv_adjoint_source.o: $O/interpolation_mod.inv_input.o
 $O/adjoint_source_mod.inv_adjoint_source.o: $O/signal_processing_mod.inv_adjoint_source.o $O/rotations_mod.inv_adjoint_source.o
@@ -389,7 +384,10 @@ $O/input_output_mod.inv_input.o: \
 $O/specfem_interface_mod.inv_specfem_interface.o: \
 	$O/adjoint_source_mod.inv_adjoint_source.o \
 	$O/input_output_mod.inv_input.o \
-	$O/signal_processing_mod.inv_adjoint_source.o
+	$O/signal_processing_mod.inv_adjoint_source.o \
+	$O/shared_par.shared_module.o \
+	$O/specfem3D_par.spec_module.o \
+	$O/create_color_image.spec.o
 
 $O/regularization_interface.inv_regularization.o: $O/regularization_SEM_mod.inv_regularization.o $O/regularization_FD_mod.inv_regularization.o
 
@@ -412,6 +410,8 @@ $O/inverse_problem_main.inv.o: \
 	$O/projection_on_FD_grid_mod.inv_projection.o \
 	$O/specfem_interface_mod.inv_specfem_interface.o \
 	$O/fwi_iteration_mod.inv_inversion.o
+
+$O/parallel_for_inverse_problem.invmpi.o: $(COND_MPI_OBJECTS)
 
 ####
 #### rule to build each .o file

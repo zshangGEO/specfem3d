@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -43,8 +43,11 @@
 
   implicit none
 
+  ! local parameters
+  integer :: iglob
+  ! iphase: iphase = 1 is for computing outer elements (on MPI interface),
+  !         iphase = 2 is for computing inner elements
   integer :: iphase
-  integer :: iface,ispec,igll,i,j,k,iglob,ispec_CPML
   logical :: backward_simulation
 
   ! debug timing
@@ -55,7 +58,9 @@
   ! GPU
   if (GPU_MODE) then
     ! checks if for kernel simulation with both, forward & backward fields
-    if (SIMULATION_TYPE == 3 .and. .not. UNDO_ATTENUATION_AND_OR_PML) then
+    if (SIMULATION_TYPE == 3 &
+        .and. .not. UNDO_ATTENUATION_AND_OR_PML &
+        .and. .not. (ELASTIC_SIMULATION .and. ACOUSTIC_SIMULATION)) then
       ! runs with the additionally optimized GPU routine
       ! (combines forward/backward fields in main compute_kernel_acoustic)
       call compute_forces_viscoelastic_GPU_calling()
@@ -66,9 +71,6 @@
 
   ! forward fields
   backward_simulation = .false.
-
-  ! saftey check
-  if (GPU_MODE .and. PML_CONDITIONS) call exit_MPI(myrank,'PML conditions not yet implemented on GPUs')
 
   ! kbai added the following two synchronizations to ensure that the displacement and velocity values
   ! at nodes on MPI interfaces stay equal on all processors that share the node.
@@ -105,8 +107,8 @@
   do iphase = 1,2
 
     ! debug timing
-    if (DO_TIMING .and. myrank == 0 .and. iphase == 2) then
-      t_start = wtime()
+    if (DO_TIMING) then
+      if (myrank == 0 .and. iphase == 2) t_start = wtime()
     endif
 
     ! elastic term
@@ -130,9 +132,11 @@
     endif
 
     ! debug timing
-    if (DO_TIMING .and. myrank == 0 .and. iphase == 2) then
-      tCPU = wtime() - t_start
-      print *,'timing: compute_forces_viscoelastic elapsed time ',tCPU,'s'
+    if (DO_TIMING) then
+      if (myrank == 0 .and. iphase == 2) then
+        tCPU = wtime() - t_start
+        print *,'timing: compute_forces_viscoelastic elapsed time ',tCPU,'s'
+      endif
     endif
 
     ! while inner elements compute "Kernel_2", we wait for MPI to
@@ -173,7 +177,7 @@
         else
           ! on GPU
           call compute_stacey_viscoelastic_GPU(iphase,num_abs_boundary_faces, &
-                                               SIMULATION_TYPE,SAVE_FORWARD,NSTEP,it, &
+                                               NSTEP,it, &
                                                b_num_abs_boundary_faces,b_reclen_field,b_absorb_field, &
                                                Mesh_pointer,1) ! 1 == forward
         endif
@@ -257,7 +261,7 @@
       ! adds source term (single-force/moment-tensor solution)
       if (.not. GPU_MODE) then
         ! on CPU
-        call compute_add_sources_viscoelastic()
+        call compute_add_sources_viscoelastic(accel)
       else
         ! on GPU
         call compute_add_sources_viscoelastic_GPU()
@@ -354,13 +358,19 @@
     endif
   endif
 
+  ! PML
+  ! impose Dirichlet conditions on the outer edges of the C-PML layers
+  if (PML_CONDITIONS) then
+    call pml_impose_boundary_condition_elastic()
+  endif
+
   ! multiplies with inverse of mass matrix (note: rmass has been inverted already)
   if (.not. GPU_MODE) then
     ! on CPU
     do iglob = 1,NGLOB_AB
-      accel(1,iglob) = accel(1,iglob)*rmassx(iglob)
-      accel(2,iglob) = accel(2,iglob)*rmassy(iglob)
-      accel(3,iglob) = accel(3,iglob)*rmassz(iglob)
+      accel(1,iglob) = accel(1,iglob) * rmassx(iglob)
+      accel(2,iglob) = accel(2,iglob) * rmassy(iglob)
+      accel(3,iglob) = accel(3,iglob) * rmassz(iglob)
     enddo
   else
     ! on GPU
@@ -380,35 +390,6 @@
       ! on GPU
       call compute_coupling_ocean_cuda(Mesh_pointer,1) ! 1 == forward
     endif
-  endif
-
-  ! PML
-  ! impose Dirichlet conditions on the outer edges of the C-PML layers
-  if (PML_CONDITIONS) then
-    do iface = 1,num_abs_boundary_faces
-      ispec = abs_boundary_ispec(iface)
-!!! It is better to move this into do iphase=1,2 loop
-      if (ispec_is_elastic(ispec) .and. is_CPML(ispec)) then
-        ! reference GLL points on boundary face
-        ispec_CPML = spec_to_CPML(ispec)
-        do igll = 1,NGLLSQUARE
-          ! gets local indices for GLL point
-          i = abs_boundary_ijk(1,igll,iface)
-          j = abs_boundary_ijk(2,igll,iface)
-          k = abs_boundary_ijk(3,igll,iface)
-
-          iglob = ibool(i,j,k,ispec)
-
-          accel(:,iglob) = 0._CUSTOM_REAL
-          veloc(:,iglob) = 0._CUSTOM_REAL
-          displ(:,iglob) = 0._CUSTOM_REAL
-          PML_displ_old(:,i,j,k,ispec_CPML) = 0._CUSTOM_REAL
-          PML_displ_new(:,i,j,k,ispec_CPML) = 0._CUSTOM_REAL
-
-        enddo
-      endif ! ispec_is_elastic
-!!!        endif
-    enddo
   endif
 
 ! updates velocities
@@ -432,7 +413,7 @@
     if (USE_LDDRK) then
       call update_veloc_elastic_lddrk()
     else
-      veloc(:,:) = veloc(:,:) + deltatover2*accel(:,:)
+      call update_veloc_elastic()
     endif
   else
     ! on GPU
@@ -446,8 +427,7 @@
   if (PML_CONDITIONS) then
     if (SIMULATION_TYPE == 1 .and. SAVE_FORWARD) then
       if (nglob_interface_PML_elastic > 0) then
-        call save_field_on_pml_interface(displ,veloc,accel,nglob_interface_PML_elastic, &
-                                         b_PML_field,b_reclen_PML_field)
+        call save_field_on_pml_interface(nglob_interface_PML_elastic,b_PML_field,b_reclen_PML_field)
       endif
     endif
   endif
@@ -479,7 +459,9 @@
   ! GPU
   if (GPU_MODE) then
     ! checks if for kernel simulation with both, forward & backward fields
-    if (SIMULATION_TYPE == 3 .and. .not. UNDO_ATTENUATION_AND_OR_PML) then
+    if (SIMULATION_TYPE == 3 &
+        .and. .not. UNDO_ATTENUATION_AND_OR_PML &
+        .and. .not. (ELASTIC_SIMULATION .and. ACOUSTIC_SIMULATION)) then
       ! runs with the additionally optimized GPU routine
       ! (combines forward/backward fields in main compute_kernel_acoustic)
       ! all done in compute_forces_acoustic_GPU_calling()
@@ -489,9 +471,6 @@
 
   ! backward fields
   backward_simulation = .true.
-
-  ! saftey check
-  if (GPU_MODE .and. PML_CONDITIONS) call exit_MPI(myrank,'PML conditions not yet implemented on GPUs')
 
   ! check
   if (FAULT_SIMULATION) then
@@ -547,7 +526,7 @@
         else
           ! on GPU
           call compute_stacey_viscoelastic_GPU(iphase,num_abs_boundary_faces, &
-                                               SIMULATION_TYPE,SAVE_FORWARD,NSTEP,it, &
+                                               NSTEP,it, &
                                                b_num_abs_boundary_faces,b_reclen_field,b_absorb_field, &
                                                Mesh_pointer,3) ! 3 == backward
         endif
@@ -586,7 +565,7 @@
       !       to avoid calling the same routine twice and to check if the source element is an inner/outer element
       if (.not. GPU_MODE) then
         ! on CPU
-        call compute_add_sources_viscoelastic_backward()
+        call compute_add_sources_viscoelastic_backward(b_accel)
       else
         ! on GPU
         call compute_add_sources_viscoelastic_backward_GPU()
@@ -646,9 +625,9 @@
   if (.not. GPU_MODE) then
     ! on CPU
     ! adjoint simulations
-    b_accel(1,:) = b_accel(1,:)*rmassx(:)
-    b_accel(2,:) = b_accel(2,:)*rmassy(:)
-    b_accel(3,:) = b_accel(3,:)*rmassz(:)
+    b_accel(1,:) = b_accel(1,:) * rmassx(:)
+    b_accel(2,:) = b_accel(2,:) * rmassy(:)
+    b_accel(3,:) = b_accel(3,:) * rmassz(:)
   else
     ! on GPU
     call kernel_3_a_cuda(Mesh_pointer,deltatover2,b_deltatover2,APPROXIMATE_OCEAN_LOAD,3) ! 3 == backward
@@ -690,8 +669,12 @@
 !   updates the velocity term which requires a(t+delta)
   if (.not. GPU_MODE) then
     ! on CPU
-    ! adjoint simulations
-    b_veloc(:,:) = b_veloc(:,:) + b_deltatover2*b_accel(:,:)
+    if (USE_LDDRK) then
+      stop 'USE_LDDRK not implemented for backward viscoelastic simulations'
+    else
+      ! adjoint simulations
+      call update_veloc_elastic_backward()
+    endif
   else
     ! on GPU
     ! only call in case of ocean load, otherwise already done in kernel 3 a
@@ -723,8 +706,9 @@
 
   integer:: iphase
 
-  ! check
-  if (PML_CONDITIONS) call exit_MPI(myrank,'PML conditions not yet implemented on GPUs')
+  ! safety check
+  if (SIMULATION_TYPE /= 3) &
+    call exit_MPI(myrank,'routine compute_forces_viscoelastic_GPU_calling() works only for SIMULATION_TYPE == 3')
 
   ! distinguishes two runs: for elements in contact with MPI interfaces, and elements within the partitions
   do iphase = 1,2
@@ -762,7 +746,7 @@
       ! adds elastic absorbing boundary term to acceleration (Stacey conditions)
       if (STACEY_ABSORBING_CONDITIONS) then
         call compute_stacey_viscoelastic_GPU(iphase,num_abs_boundary_faces, &
-                                             SIMULATION_TYPE,SAVE_FORWARD,NSTEP,it, &
+                                             NSTEP,it, &
                                              b_num_abs_boundary_faces,b_reclen_field,b_absorb_field, &
                                              Mesh_pointer,0)
       endif

@@ -1,14 +1,14 @@
 /*
 !=====================================================================
 !
-!          S p e c f e m 3 D  G l o b e  V e r s i o n  7 . 0
-!          --------------------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-!                        Princeton University, USA
-!                and CNRS / University of Marseille, France
+!                              CNRS, France
+!                       and Princeton University, USA
 !                 (there are currently many more authors!)
-! (c) Princeton University and CNRS / University of Marseille, April 2014
+!                           (c) October 2017
 !
 ! This program is free software; you can redistribute it and/or modify
 ! it under the terms of the GNU General Public License as published by
@@ -42,10 +42,12 @@ void FC_FUNC_(asdf_cleanup,ASDF_CLEANUP)(void) {}
 
 // for ASDF writer
 
-void FC_FUNC_(init_asdf_data,INIT_ASDF_DATA)(void) {
+void FC_FUNC_(write_output_asdf,WRITE_OUTPUT_ASDF)(void) {
   fprintf(stderr,"ERROR: ASDF_FORMAT enabled without ASDF Support. To enable support, reconfigure with --with-asdf flag.\n");
   exit(1);
 }
+
+void FC_FUNC_(init_asdf_data,INIT_ASDF_DATA)(void) {}
 void FC_FUNC_(store_asdf_data,STORE_ASDF_DATA)(void) {}
 void FC_FUNC_(close_asdf_data,CLOSE_ASDF_DATA)(void) {}
 void FC_FUNC_(write_asdf,WRITE_ASDF)(void) {}

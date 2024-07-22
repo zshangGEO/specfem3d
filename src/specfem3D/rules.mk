@@ -1,13 +1,13 @@
 #=====================================================================
 #
-#               S p e c f e m 3 D  V e r s i o n  3 . 0
-#               ---------------------------------------
+#                         S p e c f e m 3 D
+#                         -----------------
 #
 #     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
-#                        Princeton University, USA
-#                and CNRS / University of Marseille, France
+#                              CNRS, France
+#                       and Princeton University, USA
 #                 (there are currently many more authors!)
-# (c) Princeton University and CNRS / University of Marseille, July 2012
+#                           (c) October 2017
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -90,6 +90,7 @@ specfem3D_OBJECTS = \
 	$O/get_elevation.spec.o \
 	$O/get_force.spec.o \
 	$O/gravity_perturbation.spec.o \
+	$O/hdf5_io_server.spec_hdf5.o \
 	$O/initialize_simulation.spec.o \
 	$O/iterate_time.spec.o \
 	$O/iterate_time_undoatt.spec.o \
@@ -97,6 +98,11 @@ specfem3D_OBJECTS = \
 	$O/locate_point.spec.o \
 	$O/locate_receivers.spec.o \
 	$O/locate_source.spec.o \
+	$O/lts_assemble_MPI_vector.spec.o \
+	$O/lts_global_step.spec.o \
+	$O/lts_iterate_time.spec.o \
+	$O/lts_newmark_update.spec.o \
+	$O/lts_setup.spec.o \
 	$O/make_gravity.spec.o \
 	$O/noise_tomography.spec.o \
 	$O/pml_allocate_arrays.spec.o \
@@ -115,6 +121,7 @@ specfem3D_OBJECTS = \
 	$O/read_external_stf.spec.o \
 	$O/read_forward_arrays.spec.o \
 	$O/read_mesh_databases.spec.o \
+	$O/read_mesh_databases_hdf5.spec_hdf5.o \
 	$O/read_stations.spec.o \
 	$O/save_adjoint_kernels.spec.o \
 	$O/save_forward_arrays.spec.o \
@@ -127,17 +134,22 @@ specfem3D_OBJECTS = \
 	$O/update_displacement_scheme.spec.o \
 	$O/update_displacement_LDDRK.spec.o \
 	$O/write_movie_output.spec.o \
+	$O/write_movie_output_HDF5.spec_hdf5.o \
 	$O/write_output_ASCII_or_binary.spec.o \
+	$O/write_output_HDF5.spec_hdf5.o \
 	$O/write_output_SU.spec.o \
 	$O/write_seismograms.spec.o \
 	$(EMPTY_MACRO)
 
 specfem3D_SHARED_OBJECTS = \
 	$O/shared_par.shared_module.o \
+	$O/adios_manager.shared_adios_module.o \
 	$O/assemble_MPI_scalar.shared.o \
 	$O/check_mesh_resolution.shared.o \
+	$O/count_number_of_sources.shared.o \
 	$O/create_name_database.shared.o \
 	$O/define_derivation_matrices.shared.o \
+	$O/define_mass_matrices.shared.o \
 	$O/detect_surface.shared.o \
 	$O/exit_mpi.shared.o \
 	$O/force_ftz.cc.o \
@@ -146,6 +158,7 @@ specfem3D_SHARED_OBJECTS = \
 	$O/get_jacobian_boundaries.shared.o \
 	$O/get_shape3D.shared.o \
 	$O/gll_library.shared.o \
+	$O/hdf5_manager.shared_hdf5_module.o \
 	$O/heap_sort.shared.o \
 	$O/hex_nodes.shared.o \
 	$O/init_openmp.shared.o \
@@ -173,7 +186,9 @@ specfem3D_MODULES = \
 	$(FC_MODDIR)/fault_solver_dynamic.$(FC_MODEXT) \
 	$(FC_MODDIR)/fault_solver_kinematic.$(FC_MODEXT) \
 	$(FC_MODDIR)/gravity_perturbation.$(FC_MODEXT) \
+	$(FC_MODDIR)/io_server_hdf5.$(FC_MODEXT) \
 	$(FC_MODDIR)/image_pnm_par.$(FC_MODEXT) \
+	$(FC_MODDIR)/manager_adios.$(FC_MODEXT) \
 	$(FC_MODDIR)/pml_par.$(FC_MODEXT) \
 	$(FC_MODDIR)/specfem_par.$(FC_MODEXT) \
 	$(FC_MODDIR)/specfem_par_acoustic.$(FC_MODEXT) \
@@ -182,6 +197,7 @@ specfem3D_MODULES = \
 	$(FC_MODDIR)/specfem_par_movie.$(FC_MODEXT) \
 	$(FC_MODDIR)/specfem_par_coupling.$(FC_MODEXT) \
 	$(FC_MODDIR)/specfem_par_noise.$(FC_MODEXT) \
+	$(FC_MODDIR)/specfem_par_lts.$(FC_MODEXT) \
 	$(FC_MODDIR)/user_noise_distribution.$(FC_MODEXT) \
 	$(EMPTY_MACRO)
 
@@ -207,36 +223,50 @@ adios_specfem3D_OBJECTS= \
 	$O/read_mesh_databases_adios.spec_adios.o \
 	$O/save_forward_arrays_adios.spec_adios.o \
 	$O/read_forward_arrays_adios.spec_adios.o \
-	$O/save_kernels_adios.spec_adios.o
+	$O/save_kernels_adios.spec_adios.o \
+	$(EMPTY_MACRO)
 
 adios_specfem3D_PREOBJECTS = \
-	$O/adios_manager.shared_adios.o \
-	$O/adios_helpers_definitions.shared_adios_module.o \
-	$O/adios_helpers_writers.shared_adios_module.o \
-	$O/adios_helpers.shared_adios.o
+	$O/adios_helpers_addons.shared_adios_cc.o \
+	$O/adios_helpers_definitions.shared_adios.o \
+	$O/adios_helpers_readers.shared_adios.o \
+	$O/adios_helpers_writers.shared_adios.o \
+	$O/adios_helpers.shared_adios.o \
+	$(EMPTY_MACRO)
 
 adios_specfem3D_STUBS = \
-	$O/specfem3D_adios_stubs.spec_noadios.o
-
-adios_specfem3D_PRESTUBS = \
-	$O/adios_manager_stubs.shared_noadios.o
+	$O/adios_method_stubs.cc.o \
+	$(EMPTY_MACRO)
 
 # conditional adios linking
-ifeq ($(ADIOS),no)
-adios_specfem3D_OBJECTS = $(adios_specfem3D_STUBS)
-adios_specfem3D_PREOBJECTS = $(adios_specfem3D_PRESTUBS)
-endif
+ifeq ($(ADIOS),yes)
 specfem3D_OBJECTS += $(adios_specfem3D_OBJECTS)
 specfem3D_SHARED_OBJECTS += $(adios_specfem3D_PREOBJECTS)
+else ifeq ($(ADIOS2),yes)
+specfem3D_OBJECTS += $(adios_specfem3D_OBJECTS)
+specfem3D_SHARED_OBJECTS += $(adios_specfem3D_PREOBJECTS)
+else
+specfem3D_SHARED_OBJECTS += $(adios_specfem3D_STUBS)
+endif
+
+##
+## HDF5
+##
+
+ifeq ($(HDF5),yes)
+specfem3D_MODULES += \
+	$(FC_MODDIR)/specfem_par_movie_hdf5.$(FC_MODEXT) \
+	$(EMPTY_MACRO)
+endif
 
 ###
 ### ASDF
 ###
 
 asdf_specfem3D_OBJECTS = \
-        $O/write_output_ASDF.spec.o \
-        $O/read_adjoint_sources_ASDF.spec.o \
-        $(EMPTY_MACRO)
+	$O/write_output_ASDF.spec.o \
+	$O/read_adjoint_sources_ASDF.spec.o \
+	$(EMPTY_MACRO)
 
 asdf_specfem3D_SHARED_OBJECTS = $(asdf_shared_OBJECTS)
 asdf_specfem3D_SHARED_STUBS = $(asdf_shared_STUBS)
@@ -310,27 +340,20 @@ $O/fault_solver_dynamic.spec.o: $O/fault_solver_common.spec.o
 $O/fault_solver_kinematic.spec.o: $O/fault_solver_common.spec.o
 $O/compute_forces_viscoelastic.spec.o: $O/fault_solver_dynamic.spec.o
 $O/compute_forces_viscoelastic_calling_routine.spec.o: $O/fault_solver_dynamic.spec.o $O/fault_solver_kinematic.spec.o
+$O/finalize_simulation.spec.o: $O/fault_solver_dynamic.spec.o $O/fault_solver_kinematic.spec.o
 
 $O/prepare_timerun.spec.o: $O/fault_solver_dynamic.spec.o $O/fault_solver_kinematic.spec.o
 $O/prepare_gpu.spec.o: $O/fault_solver_dynamic.spec.o $O/fault_solver_kinematic.spec.o
 
 ## gravity
+$O/finalize_simulation.spec.o: $O/gravity_perturbation.spec.o
 $O/iterate_time.spec.o: $O/gravity_perturbation.spec.o
+$O/iterate_time_undoatt.spec.o: $O/gravity_perturbation.spec.o
 $O/prepare_gravity.spec.o: $O/gravity_perturbation.spec.o
 
-## adios
-$O/specfem3D_adios_stubs.spec_noadios.o: $O/adios_manager_stubs.shared_noadios.o
-
-$O/initialize_simulation.spec.o: $(adios_specfem3D_PREOBJECTS)
-$O/save_kernels_adios.spec_adios.o: $(adios_specfem3D_PREOBJECTS)
-$O/save_forward_arrays_adios.spec_adios.o: $(adios_specfem3D_PREOBJECTS)
-$O/read_mesh_databases_adios.spec_adios.o: $(adios_specfem3D_PREOBJECTS)
-$O/read_forward_arrays_adios.spec_adios.o: $(adios_specfem3D_PREOBJECTS)
-$O/finalize_simulation.spec.o: $O/gravity_perturbation.spec.o $(adios_specfem3D_PREOBJECTS)
-
-$O/adios_helpers.shared_adios.o: \
-	$O/adios_helpers_definitions.shared_adios_module.o \
-	$O/adios_helpers_writers.shared_adios_module.o
+## ADIOS
+$O/finalize_simulation.spec.o: $O/adios_manager.shared_adios_module.o
+$O/initialize_simulation.spec.o: $O/adios_manager.shared_adios_module.o
 
 ## ASDF compilation
 $O/write_output_ASDF.spec.o: $O/asdf_data.spec_module.o
@@ -338,6 +361,21 @@ $O/write_output_ASDF.spec.o: $O/asdf_data.spec_module.o
 ## kdtree
 $O/locate_point.spec.o: $O/search_kdtree.shared.o
 $O/setup_sources_receivers.spec.o: $O/search_kdtree.shared.o
+
+## HDF5 file i/o
+$O/prepare_attenuation.spec.o: $O/hdf5_manager.shared_hdf5_module.o
+
+$O/finalize_simulation.spec.o: $O/hdf5_io_server.spec_hdf5.o
+$O/initialize_simulation.spec.o: $O/hdf5_io_server.spec_hdf5.o
+$O/iterate_time.spec.o: $O/hdf5_io_server.spec_hdf5.o
+$O/iterate_time_undoatt.spec.o: $O/hdf5_io_server.spec_hdf5.o
+$O/write_movie_output.spec.o: $O/hdf5_io_server.spec_hdf5.o
+$O/write_movie_output_HDF5.spec_hdf5.o: $O/hdf5_io_server.spec_hdf5.o
+$O/write_output_HDF5.spec_hdf5.o: $O/hdf5_io_server.spec_hdf5.o
+
+## LTS
+$O/lts_iterate_time.spec.o: $O/gravity_perturbation.spec.o $O/hdf5_io_server.spec_hdf5.o
+$O/lts_global_step.spec.o: $O/fault_solver_dynamic.spec.o $O/fault_solver_kinematic.spec.o
 
 ####
 #### rule to build each .o file below
@@ -361,16 +399,24 @@ $O/%.spec.o: $S/%.F90 $O/specfem3D_par.spec_module.o $O/pml_par.spec_module.o
 ### ADIOS compilation
 ###
 
-$O/%.spec_adios.o: $S/%.F90 $O/specfem3D_par.spec_module.o $O/pml_par.spec_module.o
+$O/%.spec_adios.o: $S/%.F90 $O/specfem3D_par.spec_module.o $O/pml_par.spec_module.o $O/adios_helpers.shared_adios.o
 	${FCCOMPILE_CHECK} ${FCFLAGS_f90} -c -o $@ $<
 
-$O/%.spec_adios.o: $S/%.f90 $O/specfem3D_par.spec_module.o $O/pml_par.spec_module.o
+$O/%.spec_adios.o: $S/%.f90 $O/specfem3D_par.spec_module.o $O/pml_par.spec_module.o $O/adios_helpers.shared_adios.o
 	${FCCOMPILE_CHECK} ${FCFLAGS_f90} -c -o $@ $<
 
 $O/%.spec_noadios.o: $S/%.F90 $O/specfem3D_par.spec_module.o $O/pml_par.spec_module.o
 	${FCCOMPILE_CHECK} ${FCFLAGS_f90} -c -o $@ $<
 
 $O/%.spec_noadios.o: $S/%.f90 $O/specfem3D_par.spec_module.o $O/pml_par.spec_module.o
+	${FCCOMPILE_CHECK} ${FCFLAGS_f90} -c -o $@ $<
+
+
+## HDF5 file i/o
+$O/%.spec_hdf5.o: $S/%.f90 $O/specfem3D_par.spec_module.o $O/hdf5_manager.shared_hdf5_module.o
+	${FCCOMPILE_CHECK} ${FCFLAGS_f90} -c -o $@ $<
+
+$O/%.spec_hdf5.o: $S/%.F90 $O/specfem3D_par.spec_module.o $O/hdf5_manager.shared_hdf5_module.o
 	${FCCOMPILE_CHECK} ${FCFLAGS_f90} -c -o $@ $<
 
 

@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -27,15 +27,17 @@
 
   subroutine read_mesh_parameter_file()
 
-  use meshfem3D_par, only: LATITUDE_MIN,LATITUDE_MAX,LONGITUDE_MIN,LONGITUDE_MAX, &
+  use meshfem_par, only: LATITUDE_MIN,LATITUDE_MAX,LONGITUDE_MIN,LONGITUDE_MAX, &
     UTM_X_MIN,UTM_X_MAX,UTM_Y_MIN,UTM_Y_MAX,Z_DEPTH_BLOCK, &
     NEX_XI,NEX_ETA,NPROC_XI,NPROC_ETA,UTM_PROJECTION_ZONE, &
     LOCAL_PATH,SUPPRESS_UTM_PROJECTION, &
-    INTERFACES_FILE,CAVITY_FILE,NSUBREGIONS,subregions,NMATERIALS,material_properties, &
+    INTERFACES_FILE,CAVITY_FILE,NSUBREGIONS,subregions, &
+    NMATERIALS,material_properties,material_properties_undef, &
     CREATE_ABAQUS_FILES,CREATE_DX_FILES,CREATE_VTK_FILES, &
     USE_REGULAR_MESH,NDOUBLINGS,ner_doublings, &
     THICKNESS_OF_X_PML,THICKNESS_OF_Y_PML,THICKNESS_OF_Z_PML, &
-    myrank,sizeprocs,NUMBER_OF_MATERIAL_PROPERTIES
+    myrank,sizeprocs,NUMBER_OF_MATERIAL_PROPERTIES, &
+    SAVE_MESH_AS_CUBIT
 
   use constants, only: IIN,MF_IN_DATA_FILES,MAX_STRING_LEN,IMAIN, &
     IDOMAIN_ACOUSTIC,IDOMAIN_ELASTIC,IDOMAIN_POROELASTIC, &
@@ -168,6 +170,10 @@
   call read_value_logical_mesh(IIN,IGNORE_JUNK,CREATE_VTK_FILES, 'CREATE_VTK_FILES', ier)
   if (ier /= 0) stop 'Error reading Mesh parameter CREATE_VTK_FILES'
 
+  ! save as CUBIT-mesh
+  call read_value_logical_mesh(IIN,IGNORE_JUNK,SAVE_MESH_AS_CUBIT, 'SAVE_MESH_AS_CUBIT', ier)
+  if (ier /= 0) stop 'Error reading Mesh parameter SAVE_MESH_AS_CUBIT'
+
   ! file in which we store the databases
   call read_value_string_mesh(IIN,IGNORE_JUNK,LOCAL_PATH, 'LOCAL_PATH', ier)
   if (ier /= 0) stop 'Error reading Mesh parameter LOCAL_PATH'
@@ -206,8 +212,13 @@
   if (ier /= 0) stop 'Error allocation of material_properties'
   material_properties(:,:) = 0.d0
 
+  allocate(material_properties_undef(NMATERIALS,3),stat=ier)
+  if (ier /= 0) call exit_MPI_without_rank('error allocating array 1319b')
+  if (ier /= 0) stop 'Error allocation of material_properties_undef'
+  material_properties_undef(:,:) = ""
+
   do imat = 1,NMATERIALS
-    call read_material_parameters(IIN,material_properties,imat,NMATERIALS,ier)
+    call read_material_parameters(IIN,material_properties,material_properties_undef,imat,NMATERIALS,ier)
     if (ier /= 0) then
       print *,'Error reading material ',imat,' out of ',NMATERIALS
       stop 'Error reading materials in Mesh_Par_file'
@@ -436,6 +447,10 @@
   ! checks number of processes
   if (sizeprocs == 1 .and. (NPROC_XI /= 1 .or. NPROC_ETA /= 1)) &
     stop 'Error: must have NPROC_XI = NPROC_ETA = 1 for a serial run'
+
+  ! checks CUBIT output
+  if (SAVE_MESH_AS_CUBIT .and. NPROC_XI /= 1 .and. NPROC_ETA /= 1) &
+    stop 'Error: SAVE_MESH_AS_CUBIT must have NPROC_XI = NPROC_ETA = 1'
 
   ! make sure everybody is synchronized
   call synchronize_all()

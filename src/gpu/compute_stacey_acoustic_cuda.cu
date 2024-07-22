@@ -1,8 +1,8 @@
 /*
  !=====================================================================
  !
- !               S p e c f e m 3 D  V e r s i o n  3 . 0
- !               ---------------------------------------
+ !                         S p e c f e m 3 D
+ !                         -----------------
  !
  !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
  !                              CNRS, France
@@ -98,7 +98,6 @@ void FC_FUNC_(compute_stacey_acoustic_cuda,
                                                        mp->simulation_type,
                                                        mp->save_forward,
                                                        mp->d_num_abs_boundary_faces,
-                                                       mp->d_b_potential_dot_acoustic,
                                                        mp->d_b_potential_dot_dot_acoustic,
                                                        mp->d_b_absorb_potential,
                                                        mp->gravity);
@@ -119,7 +118,6 @@ void FC_FUNC_(compute_stacey_acoustic_cuda,
                                                          mp->simulation_type,
                                                          mp->save_forward,
                                                          mp->d_num_abs_boundary_faces,
-                                                         mp->d_b_potential_dot_acoustic,
                                                          mp->d_b_potential_dot_dot_acoustic,
                                                          mp->d_b_absorb_potential,
                                                          mp->gravity);

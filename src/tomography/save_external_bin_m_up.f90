@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -28,13 +28,14 @@
 ! for external mesh
 
 ! Federica Magnoni:
-! save_external_bin_m_up (compared to save_arrays_solver_ext_mesh)
+! save_external_bin_m_up (compared to save_arrays_solver_mesh)
 ! reads max_nibool_interfaces_ext_mesh instead of max_interface_size_ext_mesh
 
   subroutine save_external_bin_m_up(nspec,nglob, &
                                     rho_vp,rho_vs,qmu_attenuation_store, &
                                     rhostore,kappastore,mustore, &
                                     rmass,rmass_acoustic,rmass_solid_poroelastic,rmass_fluid_poroelastic, &
+                                    nglob_xy,rmassx,rmassy,rmassz, &
                                     APPROXIMATE_OCEAN_LOAD,rmass_ocean_load,NGLOB_OCEAN, &
                                     ibool, &
                                     xstore,ystore,zstore, &
@@ -59,12 +60,12 @@
   use shared_parameters, only: ACOUSTIC_SIMULATION,ELASTIC_SIMULATION,POROELASTIC_SIMULATION
 
   use specfem_par, only: NSPEC_IRREGULAR,ispec_is_inner,ATTENUATION, &
-            xixstore,xiystore,xizstore, &
-            etaxstore,etaystore,etazstore, &
-            gammaxstore,gammaystore,gammazstore,jacobianstore, &
-            irregular_element_number,xix_regular,jacobian_regular
+    xixstore,xiystore,xizstore, &
+    etaxstore,etaystore,etazstore, &
+    gammaxstore,gammaystore,gammazstore,jacobianstore, &
+    irregular_element_number,xix_regular,jacobian_regular
 
-  use specfem_par_elastic, only: rmassx,rmassy,rmassz, &
+  use specfem_par_elastic, only: &
     nspec_inner_elastic,nspec_outer_elastic,num_phase_ispec_elastic,phase_ispec_inner_elastic, &
     num_colors_outer_elastic,num_colors_inner_elastic,num_elem_colors_elastic
 
@@ -82,15 +83,18 @@
 
   real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLY,NGLLZ,nspec) :: rho_vp,rho_vs
 
-! attenuation
+  ! attenuation
   real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLY,NGLLZ,nspec) :: qmu_attenuation_store
 
-! material
+  ! material
   real(kind=CUSTOM_REAL), dimension(NGLLX,NGLLY,NGLLZ,nspec) :: rhostore,kappastore,mustore
   real(kind=CUSTOM_REAL), dimension(nglob) :: rmass,rmass_acoustic, &
             rmass_solid_poroelastic,rmass_fluid_poroelastic
 
-! ocean load
+  integer :: nglob_xy
+  real(kind=CUSTOM_REAL), dimension(nglob_xy) :: rmassx,rmassy,rmassz
+
+  ! ocean load
   logical :: APPROXIMATE_OCEAN_LOAD
   integer :: NGLOB_OCEAN
   real(kind=CUSTOM_REAL),dimension(NGLOB_OCEAN) :: rmass_ocean_load

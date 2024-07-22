@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -79,11 +79,11 @@
 
   ! local parameters
   integer :: ier
-  integer :: NUM_THREADS
-  integer :: OMP_GET_MAX_THREADS
+  integer :: max_threads
+  integer,external :: OMP_GET_MAX_THREADS
 
 
-! the old OpenMP implementation for compute_forces_viscoelastic is in utils/unused_routines/:
+! the old OpenMP implementation for compute_forces_viscoelastic is in utils/infos/unused_routines/:
 ! older_please_do_not_use_anymore_partial_OpenMP_port/older_not_maintained_compute_forces_viscoelastic_Dev_openmp.f90
 
   ! gets number of openMP threads
@@ -92,12 +92,12 @@
   ! for example, run executable with:
   ! OMP_NUM_THREADS=4 mpirun -np 2 ./bin/xspecfem3D
   !
-  NUM_THREADS = OMP_GET_MAX_THREADS()
+  max_threads = OMP_GET_MAX_THREADS()
 
   ! output info
   if (myrank == 0) then
     write(IMAIN,*) '  OpenMP:'
-    write(IMAIN,*) '    using',NUM_THREADS,' OpenMP threads'
+    write(IMAIN,*) '    using',max_threads,' OpenMP threads'
     call flush_IMAIN()
   endif
 

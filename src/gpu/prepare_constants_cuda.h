@@ -1,14 +1,14 @@
 /*
  !=====================================================================
  !
- !               S p e c f e m 3 D  V e r s i o n  3 . 0
- !               ---------------------------------------
+ !                         S p e c f e m 3 D
+ !                         -----------------
  !
  !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
- !                        Princeton University, USA
- !                and CNRS / University of Marseille, France
+ !                              CNRS, France
+ !                       and Princeton University, USA
  !                 (there are currently many more authors!)
- ! (c) Princeton University and CNRS / University of Marseille, July 2012
+ !                           (c) October 2017
  !
  ! This program is free software; you can redistribute it and/or modify
  ! it under the terms of the GNU General Public License as published by
@@ -110,15 +110,16 @@ __device__ __constant__ realw d_wgll_cube[NGLL3]; // needed only for gravity cas
 // If not added dummy kernel, optimizer will delete constant variables,
 // because they have not used in any of the kernel.
 __global__ void dummy_kernel(){
-  d_hprime_xx[0]=1;
-  //d_hprime_yy[0]=1;
-  //d_hprime_zz[0]=1;
-  d_hprimewgll_xx[0]=1;
-  //d_hprimewgll_yy[0]=1;
-  //d_hprimewgll_zz[0]=1;
-  d_wgllwgll_xy[0]=1;
-  d_wgllwgll_xz[0]=1;
-  d_wgllwgll_yz[0]=1;
+  realw dummy;
+  dummy = d_hprime_xx[0];
+  //dummy += d_hprime_yy[0];
+  //dummy += d_hprime_zz[0];
+  dummy += d_hprimewgll_xx[0];
+  //dummy += d_hprimewgll_yy[0];
+  //dummy += d_hprimewgll_zz[0];
+  dummy += d_wgllwgll_xy[0];
+  dummy += d_wgllwgll_xz[0];
+  dummy += d_wgllwgll_yz[0];
 }
 #endif
 
@@ -130,7 +131,7 @@ void setConst_hprime_xx(realw* array,Mesh* mp)
   if (err != cudaSuccess)
   {
     fprintf(stderr, "Error in setConst_hprime_xx: %s\n", cudaGetErrorString(err));
-    fprintf(stderr, "The problem is maybe -arch sm_13 instead of -arch sm_11 in the Makefile, please doublecheck\n");
+    fprintf(stderr, "The problem is maybe that the architecture specified in the Makefile (-gencode=arch=compute_**,code=\"sm_**,compute_**\") doesn't fit your card, please doublecheck\n");
     exit(1);
   }
 
@@ -169,7 +170,6 @@ void setConst_hprime_xx(realw* array,Mesh* mp)
 //   if (err != cudaSuccess)
 //   {
 //     fprintf(stderr, "Error in setConst_hprime_yy: %s\n", cudaGetErrorString(err));
-//     fprintf(stderr, "The problem is maybe -arch sm_13 instead of -arch sm_11 in the Makefile, please doublecheck\n");
 //     exit(1);
 //   }
 
@@ -187,7 +187,6 @@ void setConst_hprime_xx(realw* array,Mesh* mp)
 //   if (err != cudaSuccess)
 //   {
 //     fprintf(stderr, "Error in setConst_hprime_zz: %s\n", cudaGetErrorString(err));
-//     fprintf(stderr, "The problem is maybe -arch sm_13 instead of -arch sm_11 in the Makefile, please doublecheck\n");
 //     exit(1);
 //   }
 

@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -120,6 +120,7 @@
     elevation(ipoin) = loc_ele
     elevation_distmin(ipoin) = loc_distmin
   enddo
+
   ! MPI communications to determine the best slice
   call gather_all_dp(elevation,npoints,elevation_all,npoints,NPROC)
   call gather_all_dp(elevation_distmin,npoints,elevation_distmin_all,npoints,NPROC)

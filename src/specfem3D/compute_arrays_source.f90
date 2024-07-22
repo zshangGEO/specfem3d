@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -36,13 +36,14 @@
 
   implicit none
 
-  integer :: ispec_selected_source
+  integer, intent(in) :: ispec_selected_source
 
-  real(kind=CUSTOM_REAL), dimension(NDIM,NGLLX,NGLLY,NGLLZ) :: sourcearray
-  double precision, dimension(NGLLX) :: hxis,hpxis
-  double precision, dimension(NGLLY) :: hetas,hpetas
-  double precision, dimension(NGLLZ) :: hgammas,hpgammas
-  double precision :: Mxx,Myy,Mzz,Mxy,Mxz,Myz
+  real(kind=CUSTOM_REAL), dimension(NDIM,NGLLX,NGLLY,NGLLZ), intent(out) :: sourcearray
+
+  double precision, dimension(NGLLX), intent(in) :: hxis,hpxis
+  double precision, dimension(NGLLY), intent(in) :: hetas,hpetas
+  double precision, dimension(NGLLZ), intent(in) :: hgammas,hpgammas
+  double precision, intent(in) :: Mxx,Myy,Mzz,Mxy,Mxz,Myz
 
   ! local parameters
   double precision :: xixd,xiyd,xizd,etaxd,etayd,etazd,gammaxd,gammayd,gammazd
@@ -112,14 +113,15 @@
     enddo
   enddo
 
-! calculate source array
+  ! calculate source array
   sourcearrayd(:,:,:,:) = ZERO
+
   do m = 1,NGLLZ
     do l = 1,NGLLY
       do k = 1,NGLLX
-        hlagrange_xi = hpxis(k)*hetas(l)*hgammas(m)
-        hlagrange_eta = hxis(k)*hpetas(l)*hgammas(m)
-        hlagrange_gamma = hxis(k)*hetas(l)*hpgammas(m)
+        hlagrange_xi    = hpxis(k) *  hetas(l) *  hgammas(m)
+        hlagrange_eta   =  hxis(k) * hpetas(l) *  hgammas(m)
+        hlagrange_gamma =  hxis(k) *  hetas(l) * hpgammas(m)
 
         ! gradient at source position
         dsrc_dx = hlagrange_xi * dxis_dx &
@@ -137,7 +139,6 @@
         sourcearrayd(1,k,l,m) = sourcearrayd(1,k,l,m) + (Mxx*dsrc_dx + Mxy*dsrc_dy + Mxz*dsrc_dz)
         sourcearrayd(2,k,l,m) = sourcearrayd(2,k,l,m) + (Mxy*dsrc_dx + Myy*dsrc_dy + Myz*dsrc_dz)
         sourcearrayd(3,k,l,m) = sourcearrayd(3,k,l,m) + (Mxz*dsrc_dx + Myz*dsrc_dy + Mzz*dsrc_dz)
-
       enddo
     enddo
   enddo
@@ -159,33 +160,39 @@
 
   implicit none
 
-  real(kind=CUSTOM_REAL) :: factor_source
-  real(kind=CUSTOM_REAL), dimension(NDIM,NGLLX,NGLLY,NGLLZ) :: sourcearray
-  double precision, dimension(NGLLX) :: hxis
-  double precision, dimension(NGLLY) :: hetas
-  double precision, dimension(NGLLZ) :: hgammas
-  double precision :: comp_x,comp_y,comp_z
-  double precision, dimension(NDIM,NDIM) :: nu_source
+  real(kind=CUSTOM_REAL), dimension(NDIM,NGLLX,NGLLY,NGLLZ), intent(out) :: sourcearray
 
-! local parameters
+  double precision, dimension(NGLLX), intent(in) :: hxis
+  double precision, dimension(NGLLY), intent(in) :: hetas
+  double precision, dimension(NGLLZ), intent(in) :: hgammas
+  double precision, intent(in) :: factor_source
+  double precision, intent(in) :: comp_x,comp_y,comp_z
+  double precision, dimension(NDIM,NDIM), intent(in) :: nu_source
+
+  ! local parameters
   integer :: i,j,k
   double precision :: hlagrange
+  double precision, dimension(NDIM,NGLLX,NGLLY,NGLLZ) :: sourcearrayd
 
-! initializes
-  sourcearray(:,:,:,:) = 0._CUSTOM_REAL
+  ! initializes
+  sourcearrayd(:,:,:,:) = ZERO
 
-! calculates source array for interpolated location
+  ! calculates source array for interpolated location
   do k = 1,NGLLZ
     do j = 1,NGLLY
       do i = 1,NGLLX
-        hlagrange = hxis(i) * hetas(j) * hgammas(k) * dble(factor_source)
+        hlagrange = hxis(i) * hetas(j) * hgammas(k)
+
         ! identical source array components in x,y,z-direction
-        sourcearray(:,i,j,k) =  hlagrange * ( nu_source(1,:) * comp_x + &
-                                              nu_source(2,:) * comp_y + &
-                                              nu_source(3,:) * comp_z )
+        sourcearrayd(:,i,j,k) =  factor_source * hlagrange * ( nu_source(1,:) * comp_x + &
+                                                               nu_source(2,:) * comp_y + &
+                                                               nu_source(3,:) * comp_z )
       enddo
     enddo
   enddo
+
+  ! distinguish between single and double precision for reals
+  sourcearray(:,:,:,:) = real(sourcearrayd(:,:,:,:), kind=CUSTOM_REAL)
 
   end subroutine compute_arrays_source_forcesolution
 
@@ -201,12 +208,12 @@
 
   implicit none
 
-! input
-  integer irec_local
-  character(len=*) adj_source_file
+  ! input
+  integer, intent(in) :: irec_local
+  character(len=*), intent(in) :: adj_source_file
 
-! local
-  integer icomp, itime, ier, it_start, it_end, it_sub_adj
+  ! local
+  integer :: icomp, itime, ier, it_start, it_end, it_sub_adj
   real(kind=CUSTOM_REAL), dimension(NDIM,NTSTEP_BETWEEN_READ_ADJSRC) :: adj_src
   real(kind=CUSTOM_REAL), dimension(NSTEP) :: adj_source_asdf
   double precision :: junk
@@ -215,21 +222,21 @@
   character(len=MAX_STRING_LEN) :: filename
 
   ! gets channel names
-  do icomp=1,NDIM
+  do icomp = 1,NDIM
     call write_channel_name(icomp,comp(icomp))
   enddo
 
   ! range of the block we need to read
   it_sub_adj = ceiling( dble(it)/dble(NTSTEP_BETWEEN_READ_ADJSRC) )
-  it_start = NSTEP - it_sub_adj*NTSTEP_BETWEEN_READ_ADJSRC + 1
-  it_end   = it_start + NTSTEP_BETWEEN_READ_ADJSRC - 1
+  it_start   = NSTEP - it_sub_adj*NTSTEP_BETWEEN_READ_ADJSRC + 1
+  it_end     = it_start + NTSTEP_BETWEEN_READ_ADJSRC - 1
+
   adj_src(:,:) = 0._CUSTOM_REAL
-  itime=0
+  itime = 0
 
   if (READ_ADJSRC_ASDF) then
     ! ASDF format
-    do icomp = 1, NDIM ! 3 components
-
+    do icomp = 1,NDIM ! 3 components
       filename = trim(adj_source_file) // '_' // comp(icomp)
 
       ! would skip read and set source artificially to zero if out of bounds,
@@ -241,16 +248,16 @@
 
       call read_adjoint_sources_ASDF(filename, adj_source_asdf, it_start, it_end)
 
-      adj_src(icomp,:) = real(adj_source_asdf(:))
-
+      ! stores source array
+      adj_src(icomp,:) = adj_source_asdf(:)
     enddo
 
   else
     ! ASCII format
     ! loops over components
     do icomp = 1, NDIM
-
       filename = OUTPUT_FILES(1:len_trim(OUTPUT_FILES))//'/../SEM/'//trim(adj_source_file)//'.'//comp(icomp)//'.adj'
+
       open(unit=IIN,file=trim(filename),status='old',action='read',iostat = ier)
       ! cycles to next file (this might be more error prone)
       !if (ier /= 0) cycle
@@ -265,6 +272,7 @@
           call exit_MPI(myrank, &
             'file '//trim(filename)//' has wrong length, please check with your simulation duration (1111)')
       enddo
+
       !! read the block we need
       do itime = it_start, it_end
         read(IIN,*,iostat=ier) junk, source_adjoint(icomp,irec_local,itime-it_start+1)
@@ -274,6 +282,7 @@
           call exit_MPI(myrank, &
             'file '//trim(filename)//' has wrong length, please check with your simulation duration (2222)')
       enddo
+
       close(IIN)
 
     enddo
@@ -370,19 +379,21 @@
 
   implicit none
 
-  integer :: ispec_selected_source,ispec_irreg
+  integer, intent(in) :: ispec_selected_source
 
-  real(kind=CUSTOM_REAL), dimension(NDIM,NGLLX,NGLLY,NGLLZ) :: sourcearray
-  double precision, dimension(NGLLX) :: hxis,hpxis
-  double precision, dimension(NGLLY) :: hetas,hpetas
-  double precision, dimension(NGLLZ) :: hgammas,hpgammas
-  double precision, dimension(NDIM,NDIM) :: nu_source
-  double precision :: comp_x,comp_y,comp_z
-  real(kind=CUSTOM_REAL) :: factor_source
+  real(kind=CUSTOM_REAL), dimension(NDIM,NGLLX,NGLLY,NGLLZ), intent(out) :: sourcearray
+
+  double precision, dimension(NGLLX), intent(in) :: hxis,hpxis
+  double precision, dimension(NGLLY), intent(in) :: hetas,hpetas
+  double precision, dimension(NGLLZ), intent(in) :: hgammas,hpgammas
+  double precision, dimension(NDIM,NDIM), intent(in) :: nu_source
+  double precision, intent(in) :: comp_x,comp_y,comp_z
+  double precision, intent(in) :: factor_source
 
   double precision :: FX, FY, FZ
 
   ! local parameters
+  integer :: ispec_irreg
   double precision :: xixd,xiyd,xizd,etaxd,etayd,etazd,gammaxd,gammayd,gammazd
 
   ! source arrays
@@ -450,12 +461,13 @@
     enddo
   enddo
 
-  FX = factor_source *(nu_source(1,1)*comp_x + nu_source(1,2)*comp_y +  nu_source(1,3)*comp_z)
-  FY = factor_source *(nu_source(2,1)*comp_x + nu_source(2,2)*comp_y +  nu_source(2,3)*comp_z)
-  FZ = factor_source *(nu_source(3,1)*comp_x + nu_source(3,2)*comp_y +  nu_source(3,3)*comp_z)
+  FX = factor_source * (nu_source(1,1)*comp_x + nu_source(1,2)*comp_y +  nu_source(1,3)*comp_z)
+  FY = factor_source * (nu_source(2,1)*comp_x + nu_source(2,2)*comp_y +  nu_source(2,3)*comp_z)
+  FZ = factor_source * (nu_source(3,1)*comp_x + nu_source(3,2)*comp_y +  nu_source(3,3)*comp_z)
 
-! calculate source array
+  ! calculate source array
   sourcearrayd(:,:,:,:) = ZERO
+
   do m = 1,NGLLZ
     do l = 1,NGLLY
       do k = 1,NGLLX

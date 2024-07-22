@@ -40,6 +40,10 @@ EXCLUDE_DIR_LIST = [ \
   "small_SEM_solvers_in_Fortran_and_C_without_MPI_to_learn" \
 ]
 
+# optional parameters in Par_file
+OPTIONAL_PARAMETERS = [
+]
+
 #
 #----------------------------------------------------------------------------
 #
@@ -102,7 +106,7 @@ def read_Par_file_sections(parameters,file,verbose=False):
 
     for line in f:
         dataline = line.strip()
-        #print("line: ",dataline)
+        #print("debug: dataline = ",dataline)
 
         if dataline:
             # line with some data
@@ -113,6 +117,8 @@ def read_Par_file_sections(parameters,file,verbose=False):
             else:
                 # parameter line (eventually with comment appended)
                 # for example: SIMULATION_TYPE                 = 1  # or 2 # or 3
+                par_string = ""
+                app_string = ""
 
                 # separates parameter from appended comment(s)
                 index_app = dataline.find('#')
@@ -145,13 +151,21 @@ def read_Par_file_sections(parameters,file,verbose=False):
                     if is_Mesh_Par_file:
                         dataitems = par_string.split()
                         # check number of items
+                        # for example 6-entries:
+                        # #material_id  #name #domain #tomo-file #aniso_flag #domain_id
+                        # -1 tomography elastic tomography_model.xyz 0 2
                         # for example 7-entries:
                         # #NEX_XI_BEGIN  #NEX_XI_END  #NEX_ETA_BEGIN  #NEX_ETA_END  #NZ_BEGIN #NZ_END  #material_id
-                        # 1              128            1               128             1          5       14
-                        # for example 8-entries:
-                        # #material_id  #rho  #vp  #vs  #Q  #anisotropy_flag #domain_id #(optional) Q_kappa
-                        # 1  2120  2325  1360 35.0  0  2 5000
-                        if len(dataitems) == 7 or len(dataitems) == 8:
+                        # 1              128          1               128           1         5        14
+                        # for example 8-entries: (default line)
+                        # #material_id  #rho  #vp  #vs  #Q_Kappa  #Q_mu  #anisotropy_flag  #domain_id
+                        # 1             2120  2325 1360 9999.0    35.0   0                 2
+                        # for example 17-entries: (poroelastic line)
+                        # #material_id #rho_s #rho_f #phi #tort #kxx #kxy #kxz #kyy #kyz #kzz #kappa_s #kappa_f #kappa_fr #eta #mu_fr #domain_id
+                        # 2            2500   1020   0.4  2.0   1d-11 0.0 0.0  1d-11 0.0 1d-11 16.0554d9 2.295d9 10.0d9   0.0  9.63342d9 3
+                        #debug
+                        #print("debug: dataitems ",dataitems,"length: ",len(dataitems))
+                        if len(dataitems) == 6 or len(dataitems) == 7 or len(dataitems) == 8 or len(dataitems) == 17:
                             # this is a data format line
                             wrong_format = False
                 if wrong_format:
@@ -178,7 +192,7 @@ def read_Par_file_sections(parameters,file,verbose=False):
                     value = par_string
 
                 # appended comment
-                if index_app > 0:
+                if len(app_string) > 0:
                     appendix = app_string
                 else:
                     appendix = ''
@@ -312,7 +326,10 @@ def write_template_file(parameters,tmp_file,verbose=False):
                 f.write( "%s = %s\n" % (name.ljust(max_name_length),value) )
         else:
             # Mesh_Par_file data line
-            f.write( "%s\n" % value )
+            if appendix:
+                f.write( "%s   %s\n" % (value,appendix) )
+            else:
+                f.write( "%s\n" % value )
 
     f.write( "\n" )
     f.close()
@@ -404,12 +421,42 @@ def check_and_update_Par_file(my_parameters,file):
 
     # checks for old, deprecated parameters
     nold_parameters = 0
+    noptional_parameters = 0
     #print("  searching deprecated parameters...")
     my_parameters_new = my_parameters.copy()
+    main_parameters_new = main_parameters.copy()
 
     for name in my_parameters.keys():
         if not name in main_parameters.keys():
-            if (not "MESH_PAR_FILE_DATA" in name) and (not "NZ_DOUBLING" in name):
+            if name in OPTIONAL_PARAMETERS:
+                print("  optional parameter: ",name)
+                noptional_parameters += 1
+                # adds optional parameter to main parameter list
+                is_found = True
+                (val,comment,appendix) = my_parameters[name]
+
+                # gets current index of item in parameter list
+                index = list(my_parameters.keys()).index(name)
+                index_previous = 0
+                if index > 0:
+                    # gets name from previous item
+                    previous = list(my_parameters.keys())[index-1]
+                    # gets index from previous item in main_parameter list
+                    index_previous = list(main_parameters_new.keys()).index(previous)
+
+                # adds to ordered dict
+                if index_previous > 0:
+                    # adds new item after previous
+                    keys = list(main_parameters_new.keys())[index_previous+1:]
+                    main_parameters_new[name] = (val,comment,appendix)
+                    # moves keys below current item
+                    for k in keys:
+                        main_parameters_new.move_to_end(k)
+                else:
+                    # adds item to the end
+                    main_parameters_new[name] = (val,comment,appendix)
+
+            elif (not "MESH_PAR_FILE_DATA" in name) and (not "NZ_DOUBLING" in name):
                 print("  deprecated parameter: ",name)
                 nold_parameters += 1
 
@@ -450,19 +497,19 @@ def check_and_update_Par_file(my_parameters,file):
     # add missing main parameters and replaces comment lines to compare sections
     nmissing_parameters = 0
     #print("  searching missing parameters...")
-    for name in main_parameters.keys():
+    for name in main_parameters_new.keys():
         if (not "MESH_PAR_FILE_DATA" in name):
             # checks if missing
             if not name in my_parameters.keys():
                 print("  misses parameter: ",name)
                 nmissing_parameters += 1
                 # adds from main template record
-                (val,comment,appendix) = main_parameters[name]
+                (val,comment,appendix) = main_parameters_new[name]
                 my_parameters[name] = (val,comment,appendix)
 
     # updates comments
     nold_comments = 0
-    for name in main_parameters.keys():
+    for name in main_parameters_new.keys():
         if (not "MESH_PAR_FILE_DATA" in name):
             # checks we have this parameter
             if not name in my_parameters.keys():
@@ -472,7 +519,7 @@ def check_and_update_Par_file(my_parameters,file):
 
             # compares and replaces comments and appendix
             (val_orig,comment_orig,appendix_orig) = my_parameters[name]
-            (val,comment,appendix) = main_parameters[name]
+            (val,comment,appendix) = main_parameters_new[name]
             if comment_orig != comment or appendix != appendix_orig:
                 nold_comments += 1
                 # replace with new comment/appendix and only keep original value
@@ -483,19 +530,23 @@ def check_and_update_Par_file(my_parameters,file):
     iorder_new = 0
     num_material_entries = 0
     num_region_entries = 0
-    for name in main_parameters.keys():
+    for name in main_parameters_new.keys():
         if not is_Mesh_Par_file:
             # regular Par_file must have a one-to-one match
             # checks that name is available
-            if not name in my_parameters.keys():
+            if (not name in my_parameters.keys()) and (not name in OPTIONAL_PARAMETERS):
                 print("Error ordering with current file format parameter",name)
                 sys.tracebacklimit=0
                 raise Exception('parameter list invalid: %s' % file)
-            # get values
-            (val,comment,appendix) = my_parameters[name]
 
-            # put into same order of appearance
-            ordered_parameters[name] = (val,comment,appendix)
+            # adds parameter
+            if name in my_parameters.keys():
+                # get values
+                (val,comment,appendix) = my_parameters[name]
+
+                # put into same order of appearance
+                ordered_parameters[name] = (val,comment,appendix)
+                iorder_new += 1
         else:
             # Mesh_Par_file can have different number of lines for data ranges
             # new parameter file entry
@@ -594,7 +645,9 @@ def check_and_update_Par_file(my_parameters,file):
         print("  needs re-ordering...",nold_order)
 
     # replace old file if necessary
-    if nold_parameters == 0 and nmissing_parameters == 0 and nold_comments == 0 and nold_order == 0:
+    if nold_parameters == 0 and nmissing_parameters == 0 and \
+       noptional_parameters == 0 and \
+       nold_comments == 0 and nold_order == 0:
         # user info
         print("  file is okay and up-to-date")
     else:
@@ -615,7 +668,8 @@ def check_and_update_Par_file(my_parameters,file):
 
     # frees new order
     del ordered_parameters
-
+    del my_parameters_new
+    del main_parameters_new
 
 def check_parameter_file_type(file):
     """
@@ -725,10 +779,10 @@ def update_Par_files(main_file,replace=False):
 
 def usage():
     print("usage:")
-    print("    ./process_DATA_Par_files_to_update_their_parameters_from_a_main.py Main-Par-file replace")
+    print("    ./process_DATA_Par_files_to_update_their_parameters_from_a_main_file.py Main-Par-file replace")
     print("  with")
     print("    Main-Par_file - Par_file which serves as main template (e.g. DATA/Par_file)")
-    print("    replace         = flag to force replacing of file [0==check-only/1==replace]")
+    print("    replace       - flag to force replacing of file [0==check-only/1==replace]")
 
 #
 #----------------------------------------------------------------------------

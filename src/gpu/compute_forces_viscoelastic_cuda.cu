@@ -1,8 +1,8 @@
 /*
  !=====================================================================
  !
- !               S p e c f e m 3 D  V e r s i o n  3 . 0
- !               ---------------------------------------
+ !                         S p e c f e m 3 D
+ !                         -----------------
  !
  !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
  !                              CNRS, France
@@ -91,14 +91,12 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
 
   // kernel timing
   gpu_event start,stop;
-  if (CUDA_TIMING ){
-    start_timing_gpu(&start,&stop);
-  }
+  if (GPU_TIMING){ start_timing_gpu(&start,&stop); }
 
   // defines local parameters for forward/adjoint function calls
   realw *displ,*veloc,*accel;
   realw *epsilondev_xx,*epsilondev_yy,*epsilondev_xy,*epsilondev_xz,*epsilondev_yz;
-  realw *epsilon_trace_over_3;
+  realw *epsilondev_trace,*epsilon_trace_over_3;
   realw *R_xx,*R_yy,*R_xy,*R_xz,*R_yz,*R_trace;
   realw *alphaval,*betaval,*gammaval;
 
@@ -112,6 +110,7 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
     epsilondev_xy = d_epsilondev_xy;
     epsilondev_xz = d_epsilondev_xz;
     epsilondev_yz = d_epsilondev_yz;
+    epsilondev_trace = d_epsilondev_trace;
     epsilon_trace_over_3 = d_epsilon_trace_over_3;
     R_xx = d_R_xx;
     R_yy = d_R_yy;
@@ -132,6 +131,7 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
     epsilondev_xy = d_b_epsilondev_xy;
     epsilondev_xz = d_b_epsilondev_xz;
     epsilondev_yz = d_b_epsilondev_yz;
+    epsilondev_trace = d_b_epsilondev_trace;
     epsilon_trace_over_3 = d_b_epsilon_trace_over_3;
     R_xx = d_b_R_xx;
     R_yy = d_b_R_yy;
@@ -170,13 +170,14 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                 d_kappav, d_muv,
                                                                 epsilondev_xx,epsilondev_yy,epsilondev_xy,
                                                                 epsilondev_xz,epsilondev_yz,
+                                                                epsilondev_trace,
                                                                 epsilon_trace_over_3,
                                                                 mp->simulation_type,
                                                                 mp->NSPEC_AB,
                                                                 d_factor_common,
                                                                 R_xx,R_yy,R_xy,R_xz,R_yz,
+                                                                R_trace,
                                                                 d_factor_common_kappa,
-                                                                R_trace,d_epsilondev_trace,
                                                                 alphaval,betaval,gammaval,
                                                                 mp->ANISOTROPY,
                                                                 d_c11store,d_c12store,d_c13store,
@@ -191,6 +192,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                 mp->d_minus_deriv_gravity,
                                                                 d_rhostore,
                                                                 mp->d_wgll_cube,
+                                                                mp->pml_conditions,
+                                                                mp->d_is_CPML,
                                                                 FORWARD_OR_ADJOINT);
     }
 #endif
@@ -216,13 +219,14 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                             d_kappav, d_muv,
                                             epsilondev_xx,epsilondev_yy,epsilondev_xy,
                                             epsilondev_xz,epsilondev_yz,
+                                            epsilondev_trace,
                                             epsilon_trace_over_3,
                                             mp->simulation_type,
                                             mp->NSPEC_AB,
                                             d_factor_common,
                                             R_xx,R_yy,R_xy,R_xz,R_yz,
+                                            R_trace,
                                             d_factor_common_kappa,
-                                            R_trace,d_epsilondev_trace,
                                             alphaval,betaval,gammaval,
                                             mp->ANISOTROPY,
                                             d_c11store,d_c12store,d_c13store,
@@ -237,6 +241,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                             mp->d_minus_deriv_gravity,
                                             d_rhostore,
                                             mp->d_wgll_cube,
+                                            mp->pml_conditions,
+                                            mp->d_is_CPML,
                                             FORWARD_OR_ADJOINT);
     }
 #endif
@@ -264,13 +270,14 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                  d_kappav, d_muv,
                                                                  d_b_epsilondev_xx,d_b_epsilondev_yy,d_b_epsilondev_xy,
                                                                  d_b_epsilondev_xz,d_b_epsilondev_yz,
+                                                                 d_b_epsilondev_trace,
                                                                  d_b_epsilon_trace_over_3,
                                                                  mp->simulation_type,
                                                                  mp->NSPEC_AB,
                                                                  d_factor_common,
                                                                  d_b_R_xx,d_b_R_yy,d_b_R_xy,d_b_R_xz,d_b_R_yz,
+                                                                 d_b_R_trace,
                                                                  d_factor_common_kappa,
-                                                                 d_b_R_trace,d_b_epsilondev_trace,
                                                                  mp->d_b_alphaval,mp->d_b_betaval,mp->d_b_gammaval,
                                                                  mp->ANISOTROPY,
                                                                  d_c11store,d_c12store,d_c13store,
@@ -285,6 +292,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                  mp->d_minus_deriv_gravity,
                                                                  d_rhostore,
                                                                  mp->d_wgll_cube,
+                                                                 mp->pml_conditions,
+                                                                 mp->d_is_CPML,
                                                                  3);  // 3 == backward
       }
 #endif
@@ -310,13 +319,14 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                               d_kappav, d_muv,
                                               d_b_epsilondev_xx,d_b_epsilondev_yy,d_b_epsilondev_xy,
                                               d_b_epsilondev_xz,d_b_epsilondev_yz,
+                                              d_b_epsilondev_trace,
                                               d_b_epsilon_trace_over_3,
                                               mp->simulation_type,
                                               mp->NSPEC_AB,
                                               d_factor_common,
                                               d_b_R_xx,d_b_R_yy,d_b_R_xy,d_b_R_xz,d_b_R_yz,
+                                              d_b_R_trace,
                                               d_factor_common_kappa,
-                                              d_b_R_trace,d_b_epsilondev_trace,
                                               mp->d_b_alphaval,mp->d_b_betaval,mp->d_b_gammaval,
                                               mp->ANISOTROPY,
                                               d_c11store,d_c12store,d_c13store,
@@ -331,6 +341,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                               mp->d_minus_deriv_gravity,
                                               d_rhostore,
                                               mp->d_wgll_cube,
+                                              mp->pml_conditions,
+                                              mp->d_is_CPML,
                                               3);  // 3 == backward
       }
 #endif
@@ -378,6 +390,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                         mp->d_minus_deriv_gravity,
                                                                         d_rhostore,
                                                                         mp->d_wgll_cube,
+                                                                        mp->pml_conditions,
+                                                                        mp->d_is_CPML,
                                                                         FORWARD_OR_ADJOINT);
       }
 #endif
@@ -418,6 +432,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                     mp->d_minus_deriv_gravity,
                                                     d_rhostore,
                                                     mp->d_wgll_cube,
+                                                    mp->pml_conditions,
+                                                    mp->d_is_CPML,
                                                     FORWARD_OR_ADJOINT);
       }
 #endif
@@ -461,6 +477,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                            mp->d_minus_deriv_gravity,
                                                                            d_rhostore,
                                                                            mp->d_wgll_cube,
+                                                                           mp->pml_conditions,
+                                                                           mp->d_is_CPML,
                                                                            3); // 3 == backward
         }
 #endif
@@ -501,6 +519,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                       mp->d_minus_deriv_gravity,
                                                       d_rhostore,
                                                       mp->d_wgll_cube,
+                                                      mp->pml_conditions,
+                                                      mp->d_is_CPML,
                                                       3); // 3 == backward
         }
 #endif
@@ -539,6 +559,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                               mp->d_minus_deriv_gravity,
                                                                               d_rhostore,
                                                                               mp->d_wgll_cube,
+                                                                              mp->pml_conditions,
+                                                                              mp->d_is_CPML,
                                                                               FORWARD_OR_ADJOINT);
         }
 #endif
@@ -571,6 +593,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                            mp->d_minus_deriv_gravity,
                                                            d_rhostore,
                                                            mp->d_wgll_cube,
+                                                           mp->pml_conditions,
+                                                           mp->d_is_CPML,
                                                            FORWARD_OR_ADJOINT);
         }
 #endif
@@ -606,6 +630,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                                  mp->d_minus_deriv_gravity,
                                                                                  d_rhostore,
                                                                                  mp->d_wgll_cube,
+                                                                                 mp->pml_conditions,
+                                                                                 mp->d_is_CPML,
                                                                                  3); // 3 == backward
           }
 #endif
@@ -638,6 +664,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                              mp->d_minus_deriv_gravity,
                                                              d_rhostore,
                                                              mp->d_wgll_cube,
+                                                             mp->pml_conditions,
+                                                             mp->d_is_CPML,
                                                              3); // 3 == backward
           }
 #endif
@@ -670,6 +698,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                                 epsilondev_xz,epsilondev_yz,
                                                                                 epsilon_trace_over_3,
                                                                                 mp->simulation_type,
+                                                                                mp->pml_conditions,
+                                                                                mp->d_is_CPML,
                                                                                 FORWARD_OR_ADJOINT);
           }
 #endif
@@ -695,6 +725,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                             epsilondev_xz,epsilondev_yz,
                                                             epsilon_trace_over_3,
                                                             mp->simulation_type,
+                                                            mp->pml_conditions,
+                                                            mp->d_is_CPML,
                                                             FORWARD_OR_ADJOINT);
           }
 #endif
@@ -723,6 +755,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                                    d_b_epsilondev_xz,d_b_epsilondev_yz,
                                                                                    d_b_epsilon_trace_over_3,
                                                                                    mp->simulation_type,
+                                                                                   mp->pml_conditions,
+                                                                                   mp->d_is_CPML,
                                                                                    3); // 3 == backward
             }
 #endif
@@ -748,6 +782,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                               d_b_epsilondev_xz,d_b_epsilondev_yz,
                                                               d_b_epsilon_trace_over_3,
                                                               mp->simulation_type,
+                                                              mp->pml_conditions,
+                                                              mp->d_is_CPML,
                                                               3); // 3 == backward
             }
 #endif
@@ -781,6 +817,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                                     epsilondev_xz,epsilondev_yz,
                                                                                     epsilon_trace_over_3,
                                                                                     mp->simulation_type,
+                                                                                    mp->pml_conditions,
+                                                                                    mp->d_is_CPML,
                                                                                     FORWARD_OR_ADJOINT);
             }
 #endif
@@ -808,6 +846,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                  epsilondev_xz,epsilondev_yz,
                                                                  epsilon_trace_over_3,
                                                                  mp->simulation_type,
+                                                                 mp->pml_conditions,
+                                                                 mp->d_is_CPML,
                                                                  FORWARD_OR_ADJOINT);
             }
 #endif
@@ -837,6 +877,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                                        d_b_epsilondev_xz,d_b_epsilondev_yz,
                                                                                        d_b_epsilon_trace_over_3,
                                                                                        mp->simulation_type,
+                                                                                       mp->pml_conditions,
+                                                                                       mp->d_is_CPML,
                                                                                        3); // 3 == backward
               }
 #endif
@@ -864,6 +906,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                    d_b_epsilondev_xz,d_b_epsilondev_yz,
                                                                    d_b_epsilon_trace_over_3,
                                                                    mp->simulation_type,
+                                                                   mp->pml_conditions,
+                                                                   mp->d_is_CPML,
                                                                    3); // 3 == backward
               }
 #endif
@@ -894,6 +938,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                                            mp->d_hprimewgll_xx,
                                                                                            mp->d_wgllwgll_xy, mp->d_wgllwgll_xz, mp->d_wgllwgll_yz,
                                                                                            d_kappav, d_muv,
+                                                                                           mp->pml_conditions,
+                                                                                           mp->d_is_CPML,
                                                                                            FORWARD_OR_ADJOINT);
               }
 #endif
@@ -918,6 +964,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                         mp->d_hprimewgll_xx,
                                                                         mp->d_wgllwgll_xy, mp->d_wgllwgll_xz, mp->d_wgllwgll_yz,
                                                                         d_kappav, d_muv,
+                                                                        mp->pml_conditions,
+                                                                        mp->d_is_CPML,
                                                                         FORWARD_OR_ADJOINT);
               }
 #endif
@@ -942,6 +990,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                                mp->d_hprimewgll_xx,
                                                                                mp->d_wgllwgll_xy, mp->d_wgllwgll_xz, mp->d_wgllwgll_yz,
                                                                                d_kappav, d_muv,
+                                                                               mp->pml_conditions,
+                                                                               mp->d_is_CPML,
                                                                                FORWARD_OR_ADJOINT);
               }
 #endif
@@ -963,6 +1013,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                              mp->d_hprimewgll_xx,
                                                              mp->d_wgllwgll_xy, mp->d_wgllwgll_xz, mp->d_wgllwgll_yz,
                                                              d_kappav, d_muv,
+                                                             mp->pml_conditions,
+                                                             mp->d_is_CPML,
                                                              FORWARD_OR_ADJOINT);
               }
 #endif
@@ -987,6 +1039,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                                                   mp->d_hprimewgll_xx,
                                                                                   mp->d_wgllwgll_xy, mp->d_wgllwgll_xz, mp->d_wgllwgll_yz,
                                                                                   d_kappav, d_muv,
+                                                                                  mp->pml_conditions,
+                                                                                  mp->d_is_CPML,
                                                                                   3); // 3 == backward
                 }
 #endif
@@ -1009,6 +1063,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
                                                               mp->d_hprimewgll_xx,
                                                               mp->d_wgllwgll_xy, mp->d_wgllwgll_xz, mp->d_wgllwgll_yz,
                                                               d_kappav, d_muv,
+                                                              mp->pml_conditions,
+                                                              mp->d_is_CPML,
                                                               3); // 3 == backward
                 }
 #endif
@@ -1020,8 +1076,8 @@ void Kernel_2(int nb_blocks_to_compute,Mesh* mp,int d_iphase,realw d_deltat,
     } // ANISOTROPY
   } // ATTENUATION
 
-  // Cuda timing
-  if (CUDA_TIMING){
+  // kernel timing
+  if (GPU_TIMING){
     if (ATTENUATION){
       stop_timing_gpu(&start,&stop,"Kernel_2_att_impl");
     }else{
@@ -1207,5 +1263,16 @@ void FC_FUNC_(compute_forces_viscoelastic_cuda,
              mp->d_rhostore,
              FORWARD_OR_ADJOINT);
   }
+
+  // adds PML contributions
+  if (mp->NSPEC_CPML > 0){
+    compute_forces_viscoelastic_pml_cuda(Mesh_pointer,
+                                         iphase,
+                                         nspec_outer_elastic,
+                                         nspec_inner_elastic,
+                                         COMPUTE_AND_STORE_STRAIN,
+                                         FORWARD_OR_ADJOINT_f);
+  }
+
 }
 

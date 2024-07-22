@@ -1,8 +1,8 @@
 /*
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !    Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                             CNRS, France
@@ -462,7 +462,7 @@ Kernel_2_acoustic_impl(const int nb_blocks_to_compute,
 //                              i.e.               11% x theoretical peak performance ~ 440 GFlop/s.
 //                                                 11% x "pratical"  peak performance ~ 320 GFlop/s.
 //
-//   CUDA_TIMING: we achieve about 224 GFlop/s (1 mpi process, 20736 elements)
+//   GPU_TIMING: we achieve about 224 GFlop/s (1 mpi process, 20736 elements)
 //                -> that is about 8% of the "practical" peak. (or 70% of the theoretical arithmetic intensity)
 //
 //                this might be due to the first compute code block (before first syncthreads), where

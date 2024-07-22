@@ -1,14 +1,14 @@
 /*
  !=====================================================================
  !
- !               S p e c f e m 3 D  V e r s i o n  3 . 0
- !               ---------------------------------------
+ !                         S p e c f e m 3 D
+ !                         -----------------
  !
  !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
- !                        Princeton University, USA
- !                and CNRS / University of Marseille, France
+ !                              CNRS, France
+ !                       and Princeton University, USA
  !                 (there are currently many more authors!)
- ! (c) Princeton University and CNRS / University of Marseille, July 2012
+ !                           (c) October 2017
  !
  ! This program is free software; you can redistribute it and/or modify
  ! it under the terms of the GNU General Public License as published by
@@ -99,6 +99,13 @@
 #undef USE_LAUNCH_BOUNDS
 #endif
 
+#ifdef GPU_DEVICE_Hopper
+// specifics see: https://docs.nvidia.com/cuda/hopper-tuning-guide/index.html
+// register file size 64k 32-bit registers per SM
+// shared memory size 228KB per SM (maximum shared memory, 227KB per thread block)
+// maximum registers 255 per thread
+#undef USE_LAUNCH_BOUNDS
+#endif
 
 /* ----------------------------------------------------------------------------------------------- */
 

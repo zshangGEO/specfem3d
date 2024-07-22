@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -33,7 +33,11 @@
   use specfem_par_elastic
   use specfem_par_poroelastic
   use specfem_par_movie
+
   use gravity_perturbation, only: gravity_timeseries, GRAVITY_SIMULATION
+
+  ! hdf5 i/o server
+  use io_server_hdf5, only: do_io_start_idle,pass_info_to_io
 
   implicit none
 
@@ -47,6 +51,24 @@
 #ifdef VTK_VIS
   logical :: do_restart = .false.
 #endif
+
+  ! hdf5 i/o server
+  if (HDF5_IO_NODES > 0) then
+    ! start io server
+    if (IO_storage_task) then
+      call do_io_start_idle()
+    else
+      ! compute node passes necessary info to io node
+      call pass_info_to_io()
+    endif
+    ! checks if anything to do
+    if (.not. IO_compute_task) then
+      ! i/o server synchronization
+      call synchronize_inter()
+      ! all done
+      return
+    endif
+  endif
 
   !----  create a Gnuplot script to display the energy curve in log scale
   if (OUTPUT_ENERGY .and. myrank == 0) then
@@ -94,7 +116,7 @@
 !
 !   s t a r t   t i m e   i t e r a t i o n s
 !
-
+  ! user output
   if (myrank == 0) then
     write(IMAIN,*)
     write(IMAIN,*) 'Starting time iteration loop...'
@@ -113,6 +135,7 @@
   ! ************* MAIN LOOP OVER THE TIME STEPS *************
   ! *********************************************************
 
+  ! exact undoing of attenuation
   if (EXACT_UNDOING_TO_DISK) then
 
     if (GPU_MODE) call exit_MPI(myrank,'EXACT_UNDOING_TO_DISK not supported for GPUs')
@@ -125,8 +148,8 @@
 
     if (ANISOTROPIC_KL) call exit_MPI(myrank,'EXACT_UNDOING_TO_DISK requires ANISOTROPIC_KL to be turned off')
 
-!! DK DK determine the largest value of iglob that we need to save to disk,
-!! DK DK since we save the upper part of the mesh only in the case of surface-wave kernels
+    ! determine the largest value of iglob that we need to save to disk,
+    ! since we save the upper part of the mesh only in the case of surface-wave kernels
     ! crust_mantle
     allocate(integer_mask_ibool_exact_undo(NGLOB_AB),stat=ier)
     if (ier /= 0) call exit_MPI_without_rank('error allocating array 1359')
@@ -138,9 +161,9 @@
         do j = 1, NGLLY
           do i = 1, NGLLX
             iglob = ibool(i,j,k,ispec)
-!           height = xstore(iglob)
             ! save that element only if it is in the upper part of the mesh
-!           if (height >= 3000.d0) then
+            !height = xstore(iglob)
+            !if (height >= 3000.d0) then
             if (.true.) then
               ! if this point has not yet been found before
               if (integer_mask_ibool_exact_undo(iglob) == -1) then
@@ -171,7 +194,6 @@
     else
       call exit_MPI(myrank,'EXACT_UNDOING_TO_DISK can only be used with SIMULATION_TYPE == 1 or SIMULATION_TYPE == 3')
     endif
-
   endif ! of if (EXACT_UNDOING_TO_DISK)
 
   ! time loop increments begin/end
@@ -185,6 +207,15 @@
   ! get MPI starting
   time_start = wtime()
 
+  ! LTS
+  if (LTS_MODE) then
+    ! LTS steps through its own time iterations - for now
+    call lts_iterate_time()
+    ! all done, continue after time loop
+    goto 777
+  endif
+
+  ! time loop
   do it = it_begin,it_end
 
     ! simulation status output and stability check
@@ -252,7 +283,6 @@
     ! poroelastic solver
     if (POROELASTIC_SIMULATION) call compute_forces_poroelastic_calling()
 
-
     ! restores last time snapshot saved for backward/reconstruction of wavefields
     ! note: this must be read in after the Newmark time scheme
     if (SIMULATION_TYPE == 3 .and. it == 1) then
@@ -299,10 +329,14 @@
   !
   enddo   ! end of main time loop
 
+! goto point for LTS to finish time loop
+777 continue
+
   ! close the huge file that contains a dump of all the time steps to disk
   if (EXACT_UNDOING_TO_DISK) close(IFILE_FOR_EXACT_UNDOING)
 
-  call it_print_elapsed_time()
+  ! user output of runtime
+  call print_elapsed_time()
 
   !! CD CD added this
   if (RECIPROCITY_AND_KH_INTEGRAL) then
@@ -329,8 +363,9 @@
   endif
 #endif
 
-  ! cleanup GPU arrays
-  if (GPU_MODE) call it_cleanup_GPU()
+  ! hdf5 i/o server
+  ! i/o server synchronization
+  if (HDF5_IO_NODES > 0) call synchronize_inter()
 
   end subroutine iterate_time
 
@@ -362,12 +397,13 @@
     if (ELASTIC_SIMULATION) then
       call transfer_fields_el_from_device(NDIM*NGLOB_AB,displ,veloc,accel,Mesh_pointer)
 
-      if (ATTENUATION) &
-        call transfer_fields_att_from_device(Mesh_pointer, &
-                                             R_xx,R_yy,R_xy,R_xz,R_yz,size(R_xx), &
-                                             epsilondev_xx,epsilondev_yy,epsilondev_xy,epsilondev_xz,epsilondev_yz, &
-                                             R_trace,epsilondev_trace, &
-                                             size(epsilondev_xx))
+      if (ATTENUATION) then
+        call transfer_rmemory_from_device(Mesh_pointer,R_xx,R_yy,R_xy,R_xz,R_yz, &
+                                          R_trace,size(R_xx))
+        call transfer_strain_from_device(Mesh_pointer,epsilondev_xx,epsilondev_yy,epsilondev_xy,epsilondev_xz,epsilondev_yz, &
+                                         epsilondev_trace,size(epsilondev_xx))
+
+      endif
     endif
 
   else if (SIMULATION_TYPE == 3) then
@@ -400,32 +436,12 @@
     ! approximative Hessian for preconditioning kernels
     if (APPROXIMATE_HESS_KL) then
       if (ELASTIC_SIMULATION) &
-           call transfer_kernels_hess_el_tohost(Mesh_pointer,hess_kl,hess_rho_kl,hess_kappa_kl,hess_mu_kl,NSPEC_AB)
+        call transfer_kernels_hess_el_tohost(Mesh_pointer,hess_kl,hess_rho_kl,hess_kappa_kl,hess_mu_kl,NSPEC_AB)
       if (ACOUSTIC_SIMULATION) &
-           call transfer_kernels_hess_ac_tohost(Mesh_pointer,hess_ac_kl, hess_rho_ac_kl,hess_kappa_ac_kl,NSPEC_AB)
+        call transfer_kernels_hess_ac_tohost(Mesh_pointer,hess_ac_kl,hess_rho_ac_kl,hess_kappa_ac_kl,NSPEC_AB)
     endif
 
   endif
 
   end subroutine it_transfer_from_GPU
 
-!
-!-------------------------------------------------------------------------------------------------
-!
-
-  subroutine it_cleanup_GPU()
-
-  use specfem_par
-  use specfem_par_elastic
-  use specfem_par_acoustic
-
-  implicit none
-
-  ! from here on, no gpu data is needed anymore
-  ! frees allocated memory on GPU
-  call prepare_cleanup_device(Mesh_pointer,ACOUSTIC_SIMULATION,ELASTIC_SIMULATION, &
-                              STACEY_ABSORBING_CONDITIONS,NOISE_TOMOGRAPHY,COMPUTE_AND_STORE_STRAIN, &
-                              ATTENUATION,APPROXIMATE_OCEAN_LOAD, &
-                              APPROXIMATE_HESS_KL)
-
-  end subroutine it_cleanup_GPU

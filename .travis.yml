@@ -34,6 +34,9 @@ env:
     #   CUDA         - flag for compilation with CUDA    
 
     # code coverage: mpi, using code coverage flags
+    - TESTID=0 TESTCOV=1 TESTDIR=22 TESTFLAGS="--with-mpi" CUDA=false
+
+    # code coverage: mpi, using code coverage flags
     - TESTID=1 TESTCOV=1 TESTDIR=1 TESTFLAGS="--with-mpi" CUDA=false
 
     # code coverage: mpi, using code coverage flags, additional tests
@@ -126,7 +129,7 @@ env:
     # example with openmp
     - TESTID=31 TESTCOV=0 TESTDIR=24 TESTFLAGS="--enable-vectorization --enable-openmp" CUDA=false
 
-    # regular element mesh
+    # regular element mesh w/ external source time function (STF)
     - TESTID=32 TESTCOV=0 TESTDIR=25 TESTFLAGS="--enable-vectorization" CUDA=false
 
     # adjoint simulation -- offline, checked on github
@@ -137,6 +140,12 @@ env:
 
     # waterlayered_poroelastic example
     - TESTID=35 TESTCOV=0 TESTDIR=28 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
+
+    # inversion example w/ coverage
+    - TESTID=36 TESTCOV=1 TESTDIR=29 TESTFLAGS="--with-mpi" CUDA=false
+
+    # LTS example
+    - TESTID=37 TESTCOV=0 TESTDIR=30 TESTFLAGS="--enable-vectorization --with-mpi" CUDA=false
 
 
 # additional ARM tests
@@ -167,8 +176,8 @@ before_install:
       # Push
       echo "Push request:"
       COMMIT_RANGE="$(echo ${TRAVIS_COMMIT_RANGE} | cut -d '.' -f 1,4 --output-delimiter '..')"
-      #DIFF="$(git diff --name-only ${COMMIT_RANGE} --)"
-      DIFF=$(git diff --name-only ${TRAVIS_COMMIT_RANGE})
+      DIFF="$(git diff --name-only ${COMMIT_RANGE} --)"
+      #DIFF=$(git diff --name-only ${TRAVIS_COMMIT_RANGE})
     else
       # PR build
       echo "Pull request:"
@@ -215,12 +224,20 @@ before_install:
   #- test -n $CC && unset CC
 
   # updates repository
-  - |
-    travis_retry sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 6B05F25D762E3157
-    travis_retry sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 78BD65473CB3BD13
-    travis_retry sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 762E3157
-    travis_retry sudo apt-get update
-
+  # (fails currently...)
+  #- |
+  #  travis_retry sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 6B05F25D762E3157
+  #  travis_retry sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 78BD65473CB3BD13
+  #  travis_retry sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 762E3157
+  # apt explicit update
+  #- |
+  #  echo "update apt-get"
+  #  travis_retry sudo apt-get update
+  #  echo
+addons:
+  # apt update
+  apt:
+    update: true
 
 install:
   # installs compilers

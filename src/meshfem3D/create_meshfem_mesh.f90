@@ -1,7 +1,7 @@
 !=====================================================================
 !
-!               S p e c f e m 3 D  V e r s i o n  3 . 0
-!               ---------------------------------------
+!                          S p e c f e m 3 D
+!                          -----------------
 !
 !     Main historical authors: Dimitri Komatitsch and Jeroen Tromp
 !                              CNRS, France
@@ -63,21 +63,25 @@ end module create_meshfem_par
 ! create the different regions of the mesh
 
   use constants, only: IMAIN,IDOMAIN_ACOUSTIC,IDOMAIN_ELASTIC,myrank
-  use constants_meshfem3D, only: NGLLX_M,NGLLY_M,NGLLZ_M
+  use constants_meshfem, only: NGLLX_M,NGLLY_M,NGLLZ_M
   use shared_parameters, only: NGNOD,NGNOD2D
 
-  use meshfem3D_par, only: NSPEC_AB,NGLOB_AB, &
+  use meshfem_par, only: NSPEC_AB,NGLOB_AB, &
     ibool,xstore,ystore,zstore,nspec, &
     NSPEC2DMAX_XMIN_XMAX,NSPEC2DMAX_YMIN_YMAX,NSPEC2D_BOTTOM,NSPEC2D_TOP, &
     NMATERIALS,material_properties, &
     sizeprocs,prname,LOCAL_PATH, &
     CREATE_ABAQUS_FILES,CREATE_DX_FILES,CREATE_VTK_FILES, &
-    ADIOS_ENABLED, ADIOS_FOR_DATABASES, &
     is_CPML,CPML_to_spec,CPML_regions
 
   use create_meshfem_par
 
-  use adios_manager_mod, only: adios_setup,adios_cleanup
+  ! ADIOS
+  use shared_parameters, only: ADIOS_ENABLED, ADIOS_FOR_DATABASES
+  use manager_adios, only: initialize_adios,finalize_adios
+
+  ! HDF5 file i/o
+  use shared_parameters, only: HDF5_ENABLED
 
   implicit none
 
@@ -105,7 +109,7 @@ end module create_meshfem_par
 
   !--- Initialize ADIOS and setup the buffer size
   if (ADIOS_ENABLED) then
-    call adios_setup()
+    call initialize_adios()
   endif
 
   ! create the name for the database of the current slide and region
@@ -167,6 +171,12 @@ end module create_meshfem_par
                               nodes_coords,ispec_material_id, &
                               nspec2D_xmin,nspec2D_xmax,nspec2D_ymin,nspec2D_ymax, &
                               ibelm_xmin,ibelm_xmax,ibelm_ymin,ibelm_ymax,ibelm_bottom,ibelm_top)
+  else if (HDF5_ENABLED) then
+    call save_databases_hdf5(nspec,nglob, &
+                             iMPIcut_xi,iMPIcut_eta, &
+                             nodes_coords,ispec_material_id, &
+                             nspec2D_xmin,nspec2D_xmax,nspec2D_ymin,nspec2D_ymax, &
+                             ibelm_xmin,ibelm_xmax,ibelm_ymin,ibelm_ymax,ibelm_bottom,ibelm_top)
   else
     ! saves mesh as databases file  !! VM VM added xstore, ystore, zstore used for Axisem Coupling
     call save_databases(nspec,nglob, &
@@ -178,7 +188,7 @@ end module create_meshfem_par
 
   !--- Clean ADIOS. Make sure everything is already written
   if (ADIOS_ENABLED) then
-    call adios_cleanup()
+    call finalize_adios()
   endif
 
   ! frees memory
@@ -198,9 +208,9 @@ end module create_meshfem_par
   subroutine cmm_allocate_arrays()
 
   use constants, only: IMAIN,myrank
-  use constants_meshfem3D, only: NGLLX_M,NGLLY_M,NGLLZ_M
+  use constants_meshfem, only: NGLLX_M,NGLLY_M,NGLLZ_M
 
-  use meshfem3D_par, only: NSPEC_AB,nspec,ibool, &
+  use meshfem_par, only: NSPEC_AB,nspec,ibool, &
     xstore,ystore,zstore, &
     NSPEC2DMAX_XMIN_XMAX,NSPEC2DMAX_YMIN_YMAX,NSPEC2D_BOTTOM,NSPEC2D_TOP
 
@@ -281,11 +291,11 @@ end module create_meshfem_par
   use constants, only: CUSTOM_REAL,IMAIN,NGNOD_EIGHT_CORNERS,HUGEVAL,myrank, &
     GAUSSALPHA,GAUSSBETA,NDIM
 
-  use constants_meshfem3D, only: NGLLX_M,NGLLY_M,NGLLZ_M, &
+  use constants_meshfem, only: NGLLX_M,NGLLY_M,NGLLZ_M, &
     NGLOB_DOUBLING_SUPERBRICK,NSPEC_DOUBLING_SUPERBRICK, &
     IFLAG_BASEMENT_TOPO,IFLAG_ONE_LAYER_TOPOGRAPHY
 
-  use meshfem3D_par, only: xstore,ystore,zstore, &
+  use meshfem_par, only: xstore,ystore,zstore, &
     xgrid,ygrid,zgrid, &
     UTM_X_MIN,UTM_X_MAX,UTM_Y_MIN,UTM_Y_MAX,Z_DEPTH_BLOCK, &
     NEX_XI,NEX_ETA,NPROC_XI,NPROC_ETA, &
@@ -684,9 +694,9 @@ end module create_meshfem_par
   subroutine cmm_create_addressing(nglob)
 
   use constants, only: NDIM,IMAIN,MAX_STRING_LEN,myrank
-  use constants_meshfem3D, only: NGLLX_M,NGLLY_M,NGLLZ_M,NGLLCUBE_M
+  use constants_meshfem, only: NGLLX_M,NGLLY_M,NGLLZ_M,NGLLCUBE_M
 
-  use meshfem3D_par, only: prname,ibool,xstore,ystore,zstore, &
+  use meshfem_par, only: prname,ibool,xstore,ystore,zstore, &
     UTM_X_MIN,UTM_X_MAX,NGLOB_AB,nspec
 
   use create_meshfem_par
